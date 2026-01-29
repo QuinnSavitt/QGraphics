@@ -1,0 +1,7 @@
+This is the first entry in this dev diary. The idea of this project is to build an engine with a GUI and its own scripting language designed to create and stream graphics to my 64x32 LED matrix.
+I will try to balance bootstrapping the language (all you theoretically need is the ability to change one color value of one pixel and send it to the device, and you can write functions in the language that can do anything)
+with efficiency and engine support even for things that might be possible through bootstrapping. I will be directly interpreting into Python despite the ease and efficiency of interpreting down to Assembly (shrug). I've shown
+myself in the past that I can do that, so I don't need to force myself to do it again. Anyways, enough rambling. This version include:
+
+- An engine that allows for creating new frames and changing R, G, or B values.
+- A GUI that displays the current frame
