@@ -1,0 +1,165 @@
+Program
+    -> { TopLevelItem } EOF ;
+
+TopLevelItem
+    -> FunctionDecl
+     | Statement ;
+
+FunctionDecl
+    -> IDENT "{" [ ParamList ] "}" "=>" Type ":" BlockEnd ;
+
+ParamList
+    -> Param { Param } ;
+
+Param
+    -> Type IDENT ;
+
+BlockEnd
+    -> { Statement } "!" ;
+
+Statement
+    -> SimpleStmt "."
+     | IfStmt
+     | WhileStmt
+     | ForStmt ;
+
+SimpleStmt
+    -> VarDecl
+     | AssignStmt
+     | PixelAssignStmt
+     | CallStmt
+     | PublishStmt
+     | ReturnStmt
+     | ExprStmt ;
+
+VarDecl
+    -> Type IDENT [ "=" Expr ] ;
+
+AssignStmt
+    -> LValue "=" Expr ;
+
+LValue
+    -> IDENT
+     | IndexExpr ;
+
+PixelAssignStmt
+    -> PointerExpr "=" Expr ;
+
+CallStmt
+    -> "Do" IDENT "{" [ ArgList ] "}" ;
+
+ArgList
+    -> Expr { Expr } ;
+
+PublishStmt
+    -> "Publish" Expr ;
+
+ReturnStmt
+    -> "return" [ "(" Expr ")" ] ;
+
+ExprStmt
+    -> Expr ;
+
+IfStmt
+    -> "(" Expr ")" "?" BlockBody
+       [ "!?" BlockBody ] "!" ;
+
+BlockBody
+    -> { Statement } ;
+
+WhileStmt
+    -> "While" "(" Expr ")" BlockEnd ;
+
+ForStmt
+    -> "For" [ Type ] IDENT "in" Expr ":" BlockEnd ;
+
+Type
+    -> "Frame"
+     | "int"
+     | "color"
+     | "pixel"
+     | "bool"
+     | "string"
+     | "list"
+     | "None" ;
+
+Expr
+    -> PointerExpr ;
+
+PointerExpr
+    -> BoolExpr { "->" BoolExpr } ;
+
+BoolExpr
+    -> CompareExpr { BoolOp CompareExpr } ;
+
+BoolOp
+    -> "and"
+     | "or"
+     | "xor" ;
+
+CompareExpr
+    -> BitOrExpr [ CompOp BitOrExpr ] ;
+
+CompOp
+    -> "=="
+     | "<"
+     | ">"
+     | "<="
+     | ">=" ;
+
+BitOrExpr
+    -> BitAndExpr { "|" BitAndExpr } ;
+
+BitAndExpr
+    -> AddExpr { "&" AddExpr } ;
+
+AddExpr
+    -> MulExpr { ("+" | "-") MulExpr } ;
+
+MulExpr
+    -> UnaryExpr { "*" UnaryExpr } ;
+
+UnaryExpr
+    -> ( "not" | "~" | "-" ) UnaryExpr
+     | PostfixExpr ;
+
+PostfixExpr
+    -> PrimaryExpr { IndexSuffix } ;
+
+IndexSuffix
+    -> "<" Expr ">" ;
+
+PrimaryExpr
+    -> INT_LIT
+     | STRING_LIT
+     | "true"
+     | "false"
+     | "none"
+     | IDENT
+     | ColorLit
+     | PixelLit
+     | ListLit
+     | ParenExpr ;
+
+ColorLit
+    -> "(" Expr Expr Expr ")" ;
+
+PixelLit
+    -> "(" Expr Expr ")" ;
+
+ListLit
+    -> "[" [ Expr { Expr } ] "]" ;
+
+ParenExpr
+    -> "(" ParenInner ")" ;
+
+ParenInner
+    -> WalrusAssign
+     | ParenDecl
+     | Expr ;
+
+WalrusAssign
+    -> IDENT "=" Expr ;
+
+ParenDecl
+    -> Type IDENT "=" Expr ;

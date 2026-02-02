@@ -1,0 +1,23 @@
+As a method of proof, when any new features are added to the engine, I will first write them only using other existing functions (whether that be in Python or in QGraphik) before adding native engine support.
+This is definitely not the most efficient way through this, but it is the most fun way for me to prove my point. It actually only has to make sense to me for me to do it (that reference will be irrelavent by the
+time any of you read this). When designing this language, I really wanted to make it simply a graphics engine for tspmo (my first full programming language, check it out on my Github!!!), but decided I should
+take this one a bit more seriously, and also that it better shows my point to start from scratch. Engine support for tspmo is definitely on the roadmap though, so look out for that. I also almost wrote this whole
+project in tspmo, which might have been the end of me. Anyways, this update includes the first version of the scripting language. Bootstrapping the math through axiomatic theory was very tempting (I'm obsessed
+with this concept in case you cant tell), but I eventually decided against it for time. That's a job for another one of my languages in the works. This version of the language includes:
+
+- Statically typed variables
+- int, bool, color, list, string, and Frame types.
+- pixel pointers (this design choice will certainly delight people)
+- Publishing a Frame (only possible once per script at the moment, obviously this is not the final design)
+- ifs, for each, while, etc.
+
+Engine Changes:
+- Add changing all 3 colors of a pixel at once (hooray)
+
+PS: I've decided on the following rules for updates:
+
+0.0.x: bugfixes
+0.x.0: minor feature changes to more than one segment (engine, GUI, interpreter), or significant changes to one segment
+x.0.0: major changes to more than one segment.
+
+PPS: Oh, I also added a CLI command. It's probably buggy as shit, I'm still learning how to do this.

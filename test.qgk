@@ -1,0 +1,100 @@
+Frame f = Frame().
+
+int W = 64. int H = 32. int maxX = W - 1. int maxY = H - 1.
+bool debug = true. string label = "Final walrus demo".
+
+color BLACK = (0 0 0). color WHITE = (31 63 31).
+color RED = (31 0 0). color GREEN = (0 63 0). color BLUE = (0 0 31).
+
+list palette = [BLACK WHITE RED GREEN BLUE].
+palette<0> = (0 0 8). palette<4> = (31 32 31).
+
+% Returns a palette color using arithmetic + bitwise ops %
+chooseColor{int x int y}=>color:
+    int idx = (x & 3) + (y & 1). idx = idx | 0.
+    if (idx >= 5)?
+        idx = idx - 5.
+    !
+    return (palette<idx>).
+!
+
+% Logs a message; returns None %
+logMsg{string msg}=>None:
+    if (debug and not (msg == ""))?
+        int t = 1. t = t + 1.
+    !?
+        int t = 0.
+    !
+    return.
+!
+
+% Demonstrates walrus-style assignment and typed declaration in expressions %
+mixScore{int a int b}=>int:
+    % (int k = a + 2) declares k and yields its value %
+    % (a = a + 1) assigns and yields the new value %
+    return (((int k = a + 2) + (a = a + 1) + b) * 2).
+!
+
+Do logMsg{label}. Do logMsg{"Starting render"}.
+
+% Coordinate pairs as lists (pixels are NOT indexable) %
+list coords = [
+    [0 0] [1 0] [2 0] [3 0] [4 0] [5 0] [6 0] [7 0]
+    [0 1] [1 1] [2 1] [3 1] [4 1] [5 1] [6 1] [7 1]
+    [0 2] [1 2] [2 2] [3 2] [4 2] [5 2] [6 2] [7 2]
+    [0 3] [1 3] [2 3] [3 3] [4 3] [5 3] [6 3] [7 3]
+].
+
+% For-each loop with multi-statement lines %
+For list pair in coords:
+    int x = pair<0>. int y = pair<1>.
+    pixel p = (x y).
+
+    f->p = chooseColor{x y}.
+    Do setRed{f->p (x * 4)}. Do setGreen{f->p (y * 16)}. Do setBlue{f->p ((x + y) * 2)}.
+!
+
+% Walrus-style assignment inside a conditional %
+int t = 0. int u = 0.
+if (((t = 5) > 3) and not ((u = 1) == 0))?
+    t = t + 1. u = u + 2.
+!? 
+    t = 0.
+!
+
+% Parenthesized typed declaration used as an expression %
+int v2 = ((int v = t + 2) * 3).
+
+% While loop drawing a stripe across the top row %
+int i = 0. int step = 1.
+While (i <= maxX)
+    pixel q = (i 0).
+
+    bool a = ((i & 1) == 0). bool b = ((i & 2) == 0).
+    bool stripe = (a xor b).
+
+    int noise = (~i) | 3.
+
+    % Walrus-style assignment inside arithmetic %
+    int j = ((i = i + 0) + 1).
+
+    if (stripe or (noise < 0))?
+        f->q = WHITE.
+    !?
+        f->q = BLACK.
+    !
+
+    int score = Do mixScore{j v2}.
+    if ((score & 1) == 1)?
+        Do setBlue{f->q 31}.
+    !
+
+    i = i + step.
+!
+
+% Walrus-style assignment during pixel construction %
+int px = 0. int py = 0.
+pixel center = ((px = 32) (py = 16)).
+f->center = (31 63 0).
+
+Publish f.

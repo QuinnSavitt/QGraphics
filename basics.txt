@@ -1,0 +1,36 @@
+Data types:
+- Frame: frame object Frame() in python (64 wide, 32 high)
+- int: integer
+- color: takes argument of the fashion (r g b) following RGB565
+- pixel: essentially a "location pointer" that can be applied to any Frame. Represented as (x y) where both are necessary and are 0 indexed.
+- bool: Boolean (true, false)
+- string: string (use double or single quotes)
+- list: [a b c d etc]
+- None: none
+
+Operators:
+- +, -, *, ==, >, <, >=, <=, and, or, xor, not [ALL BEHAVE AS EXPECTED]
+- Bitwise: ~, |, &
+- Pixel pointer: ->
+- class data: => *classes do not exist yet in language, just implement for future*
+- accessing array indices: array<ind> (can be used for statement or assignment)
+- Order: All standard order of operations should be followed, using parenthesis is permitted. Do bitwise then standard operators for ints, assignment and pointers have lowest priority (but CAN be used inside parenthesis to create assignment and return like walrus operators in Python).
+
+Syntax:
+
+- Declaring variables: "Type name (= val)."
+- All statements end with "."
+- if statements: (bool statement)? *contents if true* !? *optional contents if false* !
+- functions: func{arg1 arg2 arg3 etc}=>ret type: *contents* return (x). *if no arg passed to return, return None*
+- function calls: Do func{arg1 arg2 arg3 etx}.
+- Publishing: Publish frame. *displays frame using framedisplayer.py*
+- Modify a pixel: "frame->pixel = color."
+- While loops: While (bool statement) *contents* !
+- For-each loops: For x in y: *contents* !
+- Comments: start and end with %
+- Note: ! closes the most recent open block.
+
+Built-in functions (should just call python functions in engine.py that accomplish same task. Make this VERY extendable for new built-ins)
+- Do setGreen{frame->pixel int}.
+- Do setBlue{frame->pixel int}.
+- Do setRed{frame->pixel int}.

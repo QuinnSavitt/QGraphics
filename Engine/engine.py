@@ -18,3 +18,9 @@ class Frame:
     def setBlue(self, x, y, value):
         r, g, b = self.display[y][x]
         self.display[y][x] = (r, g, value)
+
+    def setColor(self, x, y, r, g, b):
+        # NEW
+        self.setRed(x, y, r)
+        self.setGreen(x, y, g)
+        self.setBlue(x, y, b)

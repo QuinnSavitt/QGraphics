@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "qgraphic"
+version = "0.1.0"
+description = "QGraphic language interpreter"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "PyQt5>=5.15"
+]
+
+[project.scripts]
+qgraphic = "qgraphic:main"
+
+[tool.setuptools]
+packages = ["Engine", "GUI", "Interpreter", "Networking"]
