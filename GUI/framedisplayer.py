@@ -15,6 +15,7 @@ from PyQt5.QtWidgets import (
     QGraphicsEllipseItem,
     QPushButton,
     QButtonGroup,
+    QCheckBox,
 )
 from PyQt5.QtGui import QColor, QBrush, QPen, QPainter
 from PyQt5.QtCore import Qt, QRectF, QTimer
@@ -54,6 +55,9 @@ class LedMatrixScene(QGraphicsScene):
         self.cell_size = cell_size
         self.margin = margin
         self.current_color = (31, 63, 31)
+        self.pen_drag_paint = False
+        self._rect_preview = None
+        self._rect_start = None
         self.items_grid: list[list[PixelItem]] = []
         self._build_grid()
 
@@ -80,15 +84,71 @@ class LedMatrixScene(QGraphicsScene):
     def set_current_color(self, r5: int, g6: int, b5: int) -> None:
         self.current_color = (r5, g6, b5)
 
+    def set_pen_drag_paint(self, enabled: bool) -> None:
+        self.pen_drag_paint = enabled
+
     def mousePressEvent(self, event):
         view = self.views()[0] if self.views() else None
-        if view is not None and getattr(view, "tool_mode", "pen") == "pen":
-            item = self.itemAt(event.scenePos(), view.transform())
-            if isinstance(item, PixelItem):
-                r5, g6, b5 = self.current_color
-                self.frame.display[item.y][item.x] = (r5, g6, b5)
-                item.setBrush(QBrush(rgb565_to_qcolor(r5, g6, b5)))
+        if view is not None:
+            tool = getattr(view, "tool_mode", "pen")
+            if tool == "pen":
+                self._paint_at(event.scenePos(), view)
+            elif tool == "rect":
+                self._rect_start = event.scenePos()
+                if self._rect_preview is None:
+                    self._rect_preview = self.addRect(
+                        QRectF(self._rect_start, self._rect_start),
+                        QPen(QColor(220, 220, 220), 2, Qt.DashLine),
+                        QBrush(Qt.transparent),
+                    )
         super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        view = self.views()[0] if self.views() else None
+        if view is not None:
+            tool = getattr(view, "tool_mode", "pen")
+            if tool == "pen" and self.pen_drag_paint and (event.buttons() & Qt.LeftButton):
+                self._paint_at(event.scenePos(), view)
+            elif tool == "rect" and self._rect_preview is not None and self._rect_start is not None:
+                rect = QRectF(self._rect_start, event.scenePos()).normalized()
+                self._rect_preview.setRect(rect)
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        view = self.views()[0] if self.views() else None
+        if view is not None:
+            tool = getattr(view, "tool_mode", "pen")
+            if tool == "rect" and self._rect_preview is not None and self._rect_start is not None:
+                rect = self._rect_preview.rect()
+                self.removeItem(self._rect_preview)
+                self._rect_preview = None
+                self._apply_rect(rect)
+                self._rect_start = None
+        super().mouseReleaseEvent(event)
+
+    def _paint_at(self, pos, view) -> None:
+        item = self.itemAt(pos, view.transform())
+        if isinstance(item, PixelItem):
+            r5, g6, b5 = self.current_color
+            self.frame.display[item.y][item.x] = (r5, g6, b5)
+            item.setBrush(QBrush(rgb565_to_qcolor(r5, g6, b5)))
+
+    def _apply_rect(self, rect: QRectF) -> None:
+        if rect.isNull():
+            return
+        r5, g6, b5 = self.current_color
+        x1 = int(rect.left() // (self.cell_size + self.margin))
+        y1 = int(rect.top() // (self.cell_size + self.margin))
+        x2 = int(rect.right() // (self.cell_size + self.margin))
+        y2 = int(rect.bottom() // (self.cell_size + self.margin))
+        x1 = max(0, min(63, x1))
+        x2 = max(0, min(63, x2))
+        y1 = max(0, min(31, y1))
+        y2 = max(0, min(31, y2))
+        for y in range(min(y1, y2), max(y1, y2) + 1):
+            for x in range(min(x1, x2), max(x1, x2) + 1):
+                self.frame.display[y][x] = (r5, g6, b5)
+                self.items_grid[y][x].setBrush(QBrush(rgb565_to_qcolor(r5, g6, b5)))
 
 
 class LedMatrixView(QGraphicsView):
@@ -177,15 +237,23 @@ class LedMatrixWidget(QMainWindow):
         tool_label = QLabel("Tool")
         self.pen_btn = QPushButton("Pen")
         self.pan_btn = QPushButton("Pan/Zoom")
+        self.rect_btn = QPushButton("Rect")
         self.pen_btn.setCheckable(True)
         self.pan_btn.setCheckable(True)
+        self.rect_btn.setCheckable(True)
         self.pen_btn.setChecked(True)
         self.tool_group = QButtonGroup(self)
         self.tool_group.setExclusive(True)
         self.tool_group.addButton(self.pen_btn)
         self.tool_group.addButton(self.pan_btn)
+        self.tool_group.addButton(self.rect_btn)
         self.pen_btn.clicked.connect(lambda: self.view.set_tool_mode("pen"))
         self.pan_btn.clicked.connect(lambda: self.view.set_tool_mode("pan"))
+        self.rect_btn.clicked.connect(lambda: self.view.set_tool_mode("rect"))
+
+        self.pen_drag_toggle = QCheckBox("Drag paint")
+        self.pen_drag_toggle.setChecked(False)
+        self.pen_drag_toggle.toggled.connect(self.scene.set_pen_drag_paint)
 
         layout.addWidget(title)
         layout.addWidget(self.color_dialog)
@@ -195,6 +263,8 @@ class LedMatrixWidget(QMainWindow):
         layout.addWidget(tool_label)
         layout.addWidget(self.pen_btn)
         layout.addWidget(self.pan_btn)
+        layout.addWidget(self.rect_btn)
+        layout.addWidget(self.pen_drag_toggle)
         layout.addStretch(1)
 
         return panel

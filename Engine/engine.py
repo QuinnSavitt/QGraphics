@@ -20,7 +20,25 @@ class Frame:
         self.display[y][x] = (r, g, value)
 
     def setColor(self, x, y, r, g, b):
+        self.display[y][x] = (r, g, b)
+
+    def getPixel(self, x, y):
+        return self.display[y][x]
+
+    def getRed(self, x, y):
+        r, g, b = self.display[y][x]
+        return r
+
+    def getGreen(self, x, y):
+        r, g, b = self.display[y][x]
+        return g
+
+    def getBlue(self, x, y):
+        r, g, b = self.display[y][x]
+        return b
+
+    def makeRect(self, x1, y1, x2, y2, r, g, b):
         # NEW
-        self.setRed(x, y, r)
-        self.setGreen(x, y, g)
-        self.setBlue(x, y, b)
+        for y in range(y1, y2 + 1):
+            for x in range(x1, x2 + 1):
+                self.setColor(x, y, r, g, b)

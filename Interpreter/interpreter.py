@@ -108,6 +108,11 @@ class Interpreter:
 		self.globals.define("setGreen", self._builtin_set_green)
 		self.globals.define("setBlue", self._builtin_set_blue)
 		self.globals.define("setColor", self._builtin_set_color)
+		self.globals.define("getPixel", self._builtin_get_pixel)
+		self.globals.define("getRed", self._builtin_get_red)
+		self.globals.define("getGreen", self._builtin_get_green)
+		self.globals.define("getBlue", self._builtin_get_blue)
+		self.globals.define("makeRect", self._builtin_make_rect)
 
 	def run_file(self, path: str | Path) -> None:
 		tokens = lex_file(path)
@@ -359,6 +364,57 @@ class Interpreter:
 			raise RuntimeErrorWithLine("Second arg must be color tuple", line)
 		r, g, b = color
 		ptr.frame.setColor(ptr.x, ptr.y, int(r), int(g), int(b))
+
+	def _builtin_get_pixel(self, args: List[Any], line: int) -> tuple[int, int, int]:
+		if len(args) != 1:
+			raise RuntimeErrorWithLine("getPixel requires frame->pixel", line)
+		ptr = args[0]
+		if not isinstance(ptr, PixelRef):
+			raise RuntimeErrorWithLine("Argument must be frame->pixel", line)
+		return ptr.frame.getPixel(ptr.x, ptr.y)
+
+	def _builtin_get_red(self, args: List[Any], line: int) -> int:
+		return self._builtin_get_channel(args, line, "red")
+
+	def _builtin_get_green(self, args: List[Any], line: int) -> int:
+		return self._builtin_get_channel(args, line, "green")
+
+	def _builtin_get_blue(self, args: List[Any], line: int) -> int:
+		return self._builtin_get_channel(args, line, "blue")
+
+	def _builtin_get_channel(self, args: List[Any], line: int, channel: str) -> int:
+		if len(args) != 1:
+			raise RuntimeErrorWithLine("getColor requires frame->pixel", line)
+		ptr = args[0]
+		if not isinstance(ptr, PixelRef):
+			raise RuntimeErrorWithLine("Argument must be frame->pixel", line)
+		if channel == "red":
+			return ptr.frame.getRed(ptr.x, ptr.y)
+		if channel == "green":
+			return ptr.frame.getGreen(ptr.x, ptr.y)
+		if channel == "blue":
+			return ptr.frame.getBlue(ptr.x, ptr.y)
+		raise RuntimeErrorWithLine("Unknown color channel", line)
+
+	def _builtin_make_rect(self, args: List[Any], line: int) -> None:
+		if len(args) != 4:
+			raise RuntimeErrorWithLine("makeRect requires frame, p1, p2, color", line)
+		frame, p1, p2, color = args
+		if not isinstance(frame, Frame):
+			raise RuntimeErrorWithLine("First arg must be Frame", line)
+		x1, y1 = self._unwrap_point(p1, line)
+		x2, y2 = self._unwrap_point(p2, line)
+		if not (isinstance(color, tuple) and len(color) == 3):
+			raise RuntimeErrorWithLine("Fourth arg must be color tuple", line)
+		r, g, b = color
+		frame.makeRect(int(x1), int(y1), int(x2), int(y2), int(r), int(g), int(b))
+
+	def _unwrap_point(self, value: Any, line: int) -> tuple[int, int]:
+		if isinstance(value, PixelRef):
+			return int(value.x), int(value.y)
+		if isinstance(value, tuple) and len(value) == 2:
+			return int(value[0]), int(value[1])
+		raise RuntimeErrorWithLine("Point must be pixel or (x y)", line)
 
 	def _builtin_set_channel(self, args: List[Any], line: int, channel: str) -> None:
 		if len(args) != 2:
