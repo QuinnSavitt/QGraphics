@@ -30,4 +30,4 @@ htmlcov/
 Thumbs.db
 .vscode/
 .idea/
-.pyc
+*.pyc

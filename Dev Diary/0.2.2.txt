@@ -1,0 +1,10 @@
+Another very small update (I hope, I'm writing this before actually working on it). Just want to be easier to work with from the command line. I'd like it to be this simple:
+
+qgraphic exec file.qgk
+qgraphic GUI file.qgc
+
+with future flags for executing in a GUI or just directly sending to the matrixportal. It's taking forever to ship which is annoying.
+
+I'm now realizing I need to make a new file type to save/load from the editor. Exciting.
+
+Ok nevermind that was super easy and boring lol. Now time to make the commands. I'm sure that will be simple.

@@ -1,5 +1,7 @@
 import sys
 import os
+import json
+import zlib
 from PyQt5.QtWidgets import (
     QApplication,
     QMainWindow,
@@ -16,6 +18,8 @@ from PyQt5.QtWidgets import (
     QPushButton,
     QButtonGroup,
     QCheckBox,
+    QFileDialog,
+    QMessageBox,
 )
 from PyQt5.QtGui import QColor, QBrush, QPen, QPainter
 from PyQt5.QtCore import Qt, QRectF, QTimer
@@ -37,6 +41,30 @@ def qcolor_to_rgb565(color: QColor) -> tuple[int, int, int]:
     g6 = int(round(color.green() / 255 * 63))
     b5 = int(round(color.blue() / 255 * 31))
     return r5, g6, b5
+
+
+QGC_MAGIC = b"QGC1"
+
+
+def serialize_frame(frame: Frame) -> bytes:
+    payload = {
+        "w": 64,
+        "h": 32,
+        "pixels": frame.display,
+    }
+    raw = json.dumps(payload).encode("utf-8")
+    compressed = zlib.compress(raw, level=6)
+    return QGC_MAGIC + compressed
+
+
+def deserialize_frame(data: bytes) -> list[list[tuple[int, int, int]]]:
+    if not data.startswith(QGC_MAGIC):
+        raise ValueError("Invalid .qgc file")
+    raw = zlib.decompress(data[len(QGC_MAGIC):])
+    payload = json.loads(raw.decode("utf-8"))
+    if payload.get("w") != 64 or payload.get("h") != 32:
+        raise ValueError("Unsupported frame size")
+    return payload["pixels"]
 
 
 class PixelItem(QGraphicsEllipseItem):
@@ -80,6 +108,12 @@ class LedMatrixScene(QGraphicsScene):
                 self.addItem(item)
                 row.append(item)
             self.items_grid.append(row)
+
+    def refresh_from_frame(self) -> None:
+        for y in range(32):
+            for x in range(64):
+                r, g, b = self.frame.display[y][x]
+                self.items_grid[y][x].setBrush(QBrush(rgb565_to_qcolor(r, g, b)))
 
     def set_current_color(self, r5: int, g6: int, b5: int) -> None:
         self.current_color = (r5, g6, b5)
@@ -255,6 +289,12 @@ class LedMatrixWidget(QMainWindow):
         self.pen_drag_toggle.setChecked(False)
         self.pen_drag_toggle.toggled.connect(self.scene.set_pen_drag_paint)
 
+        file_label = QLabel("File")
+        self.save_btn = QPushButton("Save .qgc")
+        self.load_btn = QPushButton("Load .qgc")
+        self.save_btn.clicked.connect(self._save_qgc)
+        self.load_btn.clicked.connect(self._load_qgc)
+
         layout.addWidget(title)
         layout.addWidget(self.color_dialog)
         layout.addWidget(rgb_label)
@@ -265,6 +305,9 @@ class LedMatrixWidget(QMainWindow):
         layout.addWidget(self.pan_btn)
         layout.addWidget(self.rect_btn)
         layout.addWidget(self.pen_drag_toggle)
+        layout.addWidget(file_label)
+        layout.addWidget(self.save_btn)
+        layout.addWidget(self.load_btn)
         layout.addStretch(1)
 
         return panel
@@ -312,6 +355,42 @@ class LedMatrixWidget(QMainWindow):
         self.preview.setStyleSheet(
             f"background: rgb({color.red()}, {color.green()}, {color.blue()});"
         )
+
+    def _save_qgc(self) -> None:
+        filename, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save Frame",
+            "",
+            "QGraphic Frame (*.qgc)",
+        )
+        if not filename:
+            return
+        if not filename.lower().endswith(".qgc"):
+            filename += ".qgc"
+        try:
+            data = serialize_frame(self.frame)
+            with open(filename, "wb") as f:
+                f.write(data)
+        except Exception as exc:
+            QMessageBox.critical(self, "Save Failed", str(exc))
+
+    def _load_qgc(self) -> None:
+        filename, _ = QFileDialog.getOpenFileName(
+            self,
+            "Load Frame",
+            "",
+            "QGraphic Frame (*.qgc)",
+        )
+        if not filename:
+            return
+        try:
+            with open(filename, "rb") as f:
+                data = f.read()
+            pixels = deserialize_frame(data)
+            self.frame.display = pixels
+            self.scene.refresh_from_frame()
+        except Exception as exc:
+            QMessageBox.critical(self, "Load Failed", str(exc))
 
 
 if __name__ == "__main__":
