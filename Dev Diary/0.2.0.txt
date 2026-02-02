@@ -1,0 +1,3 @@
+GUI up and running! I almost exclusively work backend normally, so designing this engine for users is gonna be a unique challenge (and I have no idea how to make a GUI look good lol). 
+The GUI doesn't really integrate with the rest of my work yet, but the intention is to eventually allow stepping through programs and watching the effects on the canvas. 
+Soon, my parts will arrive for the matrix itself, so then I have to integrate this with that while still allowing others to do the same. I'll burn that bridge when I get to it.
