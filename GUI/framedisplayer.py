@@ -24,10 +24,13 @@ from PyQt5.QtWidgets import (
     QShortcut,
     QTabWidget,
     QScrollArea,
+    QSplitter,
+    QToolButton,
 )
 from PyQt5.QtGui import QKeySequence
 from PyQt5.QtGui import QColor, QBrush, QPen, QPainter
 from PyQt5.QtCore import Qt, QRectF, QTimer
+from PyQt5.QtWidgets import QSpinBox, QDoubleSpinBox, QComboBox, QRadioButton
 
 # Ensure parent directory is in sys.path for import
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -446,19 +449,32 @@ class LedMatrixWidget(QMainWindow):
         self.tab_widget.currentChanged.connect(self._on_tab_changed)
         self.tab_widget.setMinimumWidth(720)
 
+        # Style-only: plus button near rightmost tab (keeps existing New Tab behavior)
+        self.tab_add_btn = QToolButton()
+        self.tab_add_btn.setText("+")
+        self.tab_add_btn.clicked.connect(lambda: self._add_tab(f"Frame {self.tab_widget.count() + 1}"))
+        self.tab_widget.setCornerWidget(self.tab_add_btn, Qt.TopRightCorner)
+
         self._add_tab("Frame 1", frame)
 
-        controls = self._build_controls()
-        controls_scroll = QScrollArea()
-        controls_scroll.setWidgetResizable(True)
-        controls_scroll.setFrameShape(QFrame.NoFrame)
-        controls_scroll.setWidget(controls)
+        tool_panel, right_panel = self._build_controls()
+        right_scroll = QScrollArea()
+        right_scroll.setWidgetResizable(True)
+        right_scroll.setFrameShape(QFrame.NoFrame)
+        right_scroll.setWidget(right_panel)
+        splitter = QSplitter(Qt.Horizontal)
+        splitter.addWidget(tool_panel)
+        splitter.addWidget(self.tab_widget)
+        splitter.addWidget(right_scroll)
+        splitter.setStretchFactor(0, 0)
+        splitter.setStretchFactor(1, 1)
+        splitter.setStretchFactor(2, 0)
+
         root = QWidget()
         layout = QHBoxLayout(root)
         layout.setContentsMargins(12, 12, 12, 12)
         layout.setSpacing(12)
-        layout.addWidget(controls_scroll)
-        layout.addWidget(self.tab_widget, 1)
+        layout.addWidget(splitter)
         self.setCentralWidget(root)
 
         self._apply_styles()
@@ -524,9 +540,15 @@ class LedMatrixWidget(QMainWindow):
             self.pen_drag_toggle.setChecked(tab["scene"].pen_drag_paint)
         self._fit_view()
 
-    def _build_controls(self) -> QWidget:
+    def _build_controls(self) -> tuple[QWidget, QWidget]:
+        tool_panel = QWidget()
+        tool_panel.setFixedWidth(84)
+        tool_panel.setObjectName("toolPanel")
+        tool_layout = QVBoxLayout(tool_panel)
+        tool_layout.setSpacing(8)
+
         panel = QWidget()
-        panel.setFixedWidth(320)
+        panel.setMinimumWidth(320)
         panel.setObjectName("controlPanel")
         layout = QVBoxLayout(panel)
         layout.setSpacing(12)
@@ -538,16 +560,23 @@ class LedMatrixWidget(QMainWindow):
         self.color_dialog.setOption(QColorDialog.DontUseNativeDialog, True)
         self.color_dialog.setOption(QColorDialog.NoButtons, True)
         self.color_dialog.currentColorChanged.connect(self._on_qcolor_changed)
+        self.color_dialog.setMinimumSize(220, 220)
+        self.color_dialog.setMaximumSize(260, 260)
+        # Style-only: hide advanced controls (HSV/HTML/etc) for a simple picker
+        QTimer.singleShot(0, self._simplify_color_dialog)
 
         rgb_label = QLabel("RGB565 (r g b)")
         self.rgb_input = QLineEdit("31 63 31")
         self.rgb_input.setPlaceholderText("e.g. 31 63 31")
         self.rgb_input.editingFinished.connect(self._on_rgb_input)
+        self.rgb_input.setMaximumWidth(200)
 
+        # Style-only: keep color section minimal (wheel + RGB565 fields)
         self.preview = QFrame()
-        self.preview.setFixedHeight(48)
+        self.preview.setFixedHeight(36)
         self.preview.setObjectName("colorPreview")
         self._set_preview_color(31, 63, 31)
+        self.preview.setVisible(False)
 
         tool_label = QLabel("Tool")
         self.pen_btn = QPushButton("Pen")
@@ -594,15 +623,13 @@ class LedMatrixWidget(QMainWindow):
         self.deselect_btn = QPushButton("Deselect")
         self.deselect_btn.clicked.connect(self._deselect)
 
-        self.pen_drag_toggle = QCheckBox("Drag paint")
+        self.pen_drag_toggle = QCheckBox("Drag")
         self.pen_drag_toggle.setChecked(False)
         self.pen_drag_toggle.toggled.connect(self._set_pen_drag)
 
         file_label = QLabel("File")
         self.save_btn = QPushButton("Save .qgc")
         self.load_btn = QPushButton("Load .qgc")
-        self.new_tab_btn = QPushButton("New Tab")
-        self.new_tab_btn.clicked.connect(lambda: self._add_tab(f"Frame {self.tab_widget.count() + 1}"))
         self.save_btn.clicked.connect(self._save_qgc)
         self.load_btn.clicked.connect(self._load_qgc)
 
@@ -614,49 +641,82 @@ class LedMatrixWidget(QMainWindow):
 
         self._install_shortcuts()
 
+        # Left tool strip (layout-only change)
+        tool_layout.addWidget(tool_label)
+        tool_layout.addWidget(self.pen_btn)
+        tool_layout.addWidget(self.pan_btn)
+        tool_layout.addWidget(self.rect_btn)
+        tool_layout.addWidget(self.line_btn)
+        tool_layout.addWidget(self.bucket_btn)
+        tool_layout.addWidget(self.select_btn)
+        tool_layout.addWidget(self.select_mode_label)
+        tool_layout.addWidget(self.select_rect_btn)
+        tool_layout.addWidget(self.select_pen_btn)
+        tool_layout.addWidget(self.deselect_btn)
+        tool_layout.addWidget(self.pen_drag_toggle)
+        tool_layout.addStretch(1)
+
+        # Right control panel (layout-only change)
         layout.addWidget(title)
         layout.addWidget(self.color_dialog)
         layout.addWidget(rgb_label)
         layout.addWidget(self.rgb_input)
-        layout.addWidget(self.preview)
-        layout.addWidget(tool_label)
-        layout.addWidget(self.pen_btn)
-        layout.addWidget(self.pan_btn)
-        layout.addWidget(self.rect_btn)
-        layout.addWidget(self.line_btn)
-        layout.addWidget(self.bucket_btn)
-        layout.addWidget(self.select_btn)
-        layout.addWidget(self.select_mode_label)
-        layout.addWidget(self.select_rect_btn)
-        layout.addWidget(self.select_pen_btn)
-        layout.addWidget(self.deselect_btn)
-        layout.addWidget(self.pen_drag_toggle)
         layout.addWidget(history_label)
         layout.addWidget(self.undo_btn)
         layout.addWidget(self.redo_btn)
         layout.addWidget(file_label)
-        layout.addWidget(self.new_tab_btn)
         layout.addWidget(self.save_btn)
         layout.addWidget(self.load_btn)
         layout.addStretch(1)
 
         self._set_select_ui_visible(False)
 
-        return panel
+        return tool_panel, panel
 
     def _apply_styles(self) -> None:
+        # Style-only changes: dark theme, muted panels, subtle borders
         self.setStyleSheet(
             """
-            QWidget { color: #EDEDED; font-family: Segoe UI, Arial; font-size: 12px; }
-            #controlPanel { background: #F4F4F4; }
-            #controlPanel QLabel { color: #000000; }
-            #panelTitle { font-size: 16px; font-weight: 600; margin-bottom: 4px; }
-            QLineEdit { background: #1E1E1E; border: 1px solid #333; padding: 6px; border-radius: 6px; }
-            #colorPreview { border: 1px solid #333; border-radius: 8px; }
-            QPushButton, QAbstractButton { color: #000000; }
-            QTabBar::tab { background: #D6D6D6; color: #000000; padding: 6px 10px; border-top-left-radius: 6px; border-top-right-radius: 6px; }
-            QTabBar::tab:selected { background: #E2E2E2; }
-            QTabWidget::pane { border: 1px solid #3A3A3A; }
+            QWidget { color: #C9CED6; font-family: Segoe UI, Arial; font-size: 11px; }
+            QMainWindow { background: #0B0F14; }
+            #toolPanel { background: #10151C; border: 1px solid #1C2330; }
+            #controlPanel { background: #10151C; border: 1px solid #1C2330; }
+            #panelTitle { font-size: 13px; font-weight: 600; margin-bottom: 4px; color: #E6E9EF; }
+            #sectionHeader { font-size: 12px; font-weight: 600; color: #AEB6C2; }
+            QLabel { color: #C9CED6; }
+            QLineEdit { background: #0F141B; border: 1px solid #1C2330; padding: 6px; border-radius: 6px; color: #E6E9EF; }
+            #colorPreview { border: 1px solid #1C2330; border-radius: 8px; }
+            QPushButton, QAbstractButton {
+                background: #10151C;
+                border: 1px solid #1C2330;
+                border-radius: 6px;
+                padding: 6px;
+                color: #C9CED6;
+            }
+            QPushButton:hover, QAbstractButton:hover { border-color: #2A3345; color: #E6E9EF; }
+            QPushButton:pressed, QAbstractButton:pressed { background: #121A24; }
+            QPushButton:checked { background: #1A2433; border-color: #3A506B; color: #E6E9EF; }
+            QCheckBox { color: #C9CED6; }
+            QTabBar::tab {
+                background: #121722;
+                color: #C9CED6;
+                padding: 6px 10px;
+                border-top-left-radius: 6px;
+                border-top-right-radius: 6px;
+                border: 1px solid #1C2330;
+                margin-right: 4px;
+            }
+            QTabBar::tab:selected { background: #182234; color: #E6E9EF; }
+            QTabWidget::pane { border: 1px solid #1C2330; }
+            QScrollArea { background: transparent; }
+            QTabWidget QToolButton {
+                background: #24324A;
+                color: #E6E9EF;
+                border: 1px solid #3A506B;
+                border-radius: 6px;
+                padding: 2px 8px;
+            }
+            QTabWidget QToolButton:hover { background: #2E3F5E; }
             """
         )
 
@@ -696,6 +756,12 @@ class LedMatrixWidget(QMainWindow):
         self.preview.setStyleSheet(
             f"background: rgb({color.red()}, {color.green()}, {color.blue()});"
         )
+
+    def _simplify_color_dialog(self) -> None:
+        # Hide non-essential controls while keeping the color area intact
+        for widget_type in (QLabel, QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox, QCheckBox, QRadioButton, QToolButton):
+            for w in self.color_dialog.findChildren(widget_type):
+                w.setVisible(False)
 
     def _install_shortcuts(self) -> None:
         QShortcut(QKeySequence("Ctrl+Z"), self, activated=self.undo)
