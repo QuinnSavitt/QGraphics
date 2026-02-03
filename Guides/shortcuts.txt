@@ -1,0 +1,11 @@
+Ctrl+Z: Undo (length-5 history)
+Ctrl+Shift+Z: Redo
+L: Line tool
+R: Rect tool
+hold Space: temp pan/zoom tool
+P: Pen tool
+O: toggle drag
+B: Paint Bucket
+Ctrl+S: Save
+S: Select tool
+Ctrl+D: deselect

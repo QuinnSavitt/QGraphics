@@ -113,6 +113,8 @@ class Interpreter:
 		self.globals.define("getGreen", self._builtin_get_green)
 		self.globals.define("getBlue", self._builtin_get_blue)
 		self.globals.define("makeRect", self._builtin_make_rect)
+		self.globals.define("makeLine", self._builtin_make_line)
+		self.globals.define("Fill", self._builtin_fill)
 
 	def run_file(self, path: str | Path) -> None:
 		tokens = lex_file(path)
@@ -408,6 +410,32 @@ class Interpreter:
 			raise RuntimeErrorWithLine("Fourth arg must be color tuple", line)
 		r, g, b = color
 		frame.makeRect(int(x1), int(y1), int(x2), int(y2), int(r), int(g), int(b))
+
+	def _builtin_make_line(self, args: List[Any], line: int) -> None:
+		if len(args) != 4:
+			raise RuntimeErrorWithLine("makeLine requires frame, p1, p2, color", line)
+		frame, p1, p2, color = args
+		if not isinstance(frame, Frame):
+			raise RuntimeErrorWithLine("First arg must be Frame", line)
+		x1, y1 = self._unwrap_point(p1, line)
+		x2, y2 = self._unwrap_point(p2, line)
+		if not (isinstance(color, tuple) and len(color) == 3):
+			raise RuntimeErrorWithLine("Fourth arg must be color tuple", line)
+		r, g, b = color
+		frame.makeLine(int(x1), int(y1), int(x2), int(y2), int(r), int(g), int(b))
+
+	def _builtin_fill(self, args: List[Any], line: int) -> None:
+		if len(args) != 4:
+			raise RuntimeErrorWithLine("Fill requires frame, startx, starty, color", line)
+		frame, startx, starty, color = args
+		if not isinstance(frame, Frame):
+			raise RuntimeErrorWithLine("First arg must be Frame", line)
+		if not isinstance(startx, int) or not isinstance(starty, int):
+			raise RuntimeErrorWithLine("startx/starty must be int", line)
+		if not (isinstance(color, tuple) and len(color) == 3):
+			raise RuntimeErrorWithLine("color must be tuple", line)
+		r, g, b = color
+		frame.fill(int(startx), int(starty), int(r), int(g), int(b))
 
 	def _unwrap_point(self, value: Any, line: int) -> tuple[int, int]:
 		if isinstance(value, PixelRef):

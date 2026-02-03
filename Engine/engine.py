@@ -42,3 +42,58 @@ class Frame:
         for y in range(y1, y2 + 1):
             for x in range(x1, x2 + 1):
                 self.setColor(x, y, r, g, b)
+
+    def makeLine(self, x1, y1, x2, y2, r, g, b):
+        # NEW: Bresenham line
+        x1 = int(x1)
+        y1 = int(y1)
+        x2 = int(x2)
+        y2 = int(y2)
+
+        dx = abs(x2 - x1)
+        dy = -abs(y2 - y1)
+        sx = 1 if x1 < x2 else -1
+        sy = 1 if y1 < y2 else -1
+        err = dx + dy
+
+        while True:
+            if 0 <= x1 < 64 and 0 <= y1 < 32:
+                self.setColor(x1, y1, r, g, b)
+            if x1 == x2 and y1 == y2:
+                break
+            e2 = 2 * err
+            if e2 >= dy:
+                err += dy
+                x1 += sx
+            if e2 <= dx:
+                err += dx
+                y1 += sy
+
+    def fill(self, startx, starty, r, g, b):
+        # NEW: 4-direction flood fill
+        startx = int(startx)
+        starty = int(starty)
+        if not (0 <= startx < 64 and 0 <= starty < 32):
+            return
+        target = self.display[starty][startx]
+        replacement = (r, g, b)
+        if target == replacement:
+            return
+        stack = [(startx, starty)]
+        visited = set()
+        while stack:
+            x, y = stack.pop()
+            if (x, y) in visited:
+                continue
+            visited.add((x, y))
+            if self.display[y][x] != target:
+                continue
+            self.display[y][x] = replacement
+            if x > 0:
+                stack.append((x - 1, y))
+            if x < 63:
+                stack.append((x + 1, y))
+            if y > 0:
+                stack.append((x, y - 1))
+            if y < 31:
+                stack.append((x, y + 1))
