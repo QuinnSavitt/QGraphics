@@ -81,7 +81,7 @@ class PixelItem(QGraphicsEllipseItem):
         self.x = x
         self.y = y
         self.default_pen = QPen(QColor(30, 30, 30), 1)
-        self.selected_pen = QPen(QColor(255, 220, 80), 2)
+        self.selected_pen = QPen(QColor(255, 255, 255), 2)
         self.setPen(self.default_pen)
         self.setBrush(QBrush(QColor(0, 0, 0)))
 
@@ -104,7 +104,7 @@ class LedMatrixScene(QGraphicsScene):
         self._action_active = False
         self._bucket_pending = None
         self._selection: set[tuple[int, int]] = set()
-        self._select_mode = "rect"  # rect | pen
+        self._select_mode = "rect"  # rect | pen | fill
         self.items_grid: list[list[PixelItem]] = []
         self._build_grid()
 
@@ -192,8 +192,10 @@ class LedMatrixScene(QGraphicsScene):
                             QPen(QColor(120, 200, 255), 2, Qt.DashLine),
                             QBrush(Qt.transparent),
                         )
-                else:
+                elif self._select_mode == "pen":
                     self._select_at(event.scenePos(), view)
+                elif self._select_mode == "fill":
+                    self._select_fill(event.scenePos())
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event):
@@ -381,6 +383,28 @@ class LedMatrixScene(QGraphicsScene):
         for y in range(min(y1, y2), max(y1, y2) + 1):
             for x in range(min(x1, x2), max(x1, x2) + 1):
                 self._add_to_selection(x, y)
+
+    def _select_fill(self, pos) -> None:
+        gx, gy = self._scene_to_grid(pos.x(), pos.y())
+        target = self.frame.display[gy][gx]
+        stack = [(gx, gy)]
+        visited = set()
+        while stack:
+            x, y = stack.pop()
+            if (x, y) in visited:
+                continue
+            visited.add((x, y))
+            if self.frame.display[y][x] != target:
+                continue
+            self._add_to_selection(x, y)
+            if x > 0:
+                stack.append((x - 1, y))
+            if x < 63:
+                stack.append((x + 1, y))
+            if y > 0:
+                stack.append((x, y - 1))
+            if y < 31:
+                stack.append((x, y + 1))
 
     def _add_to_selection(self, x: int, y: int) -> None:
         if (x, y) in self._selection:
@@ -610,15 +634,19 @@ class LedMatrixWidget(QMainWindow):
         self.select_mode_label = QLabel("Select Mode")
         self.select_rect_btn = QPushButton("Rect")
         self.select_pen_btn = QPushButton("Pen")
+        self.select_fill_btn = QPushButton("Fill")
         self.select_rect_btn.setCheckable(True)
         self.select_pen_btn.setCheckable(True)
+        self.select_fill_btn.setCheckable(True)
         self.select_rect_btn.setChecked(True)
         self.select_group = QButtonGroup(self)
         self.select_group.setExclusive(True)
         self.select_group.addButton(self.select_rect_btn)
         self.select_group.addButton(self.select_pen_btn)
+        self.select_group.addButton(self.select_fill_btn)
         self.select_rect_btn.clicked.connect(lambda: self._set_select_mode("rect"))
         self.select_pen_btn.clicked.connect(lambda: self._set_select_mode("pen"))
+        self.select_fill_btn.clicked.connect(lambda: self._set_select_mode("fill"))
 
         self.deselect_btn = QPushButton("Deselect")
         self.deselect_btn.clicked.connect(self._deselect)
@@ -652,6 +680,7 @@ class LedMatrixWidget(QMainWindow):
         tool_layout.addWidget(self.select_mode_label)
         tool_layout.addWidget(self.select_rect_btn)
         tool_layout.addWidget(self.select_pen_btn)
+        tool_layout.addWidget(self.select_fill_btn)
         tool_layout.addWidget(self.deselect_btn)
         tool_layout.addWidget(self.pen_drag_toggle)
         tool_layout.addStretch(1)
