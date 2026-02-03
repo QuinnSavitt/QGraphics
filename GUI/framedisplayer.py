@@ -578,7 +578,7 @@ class LedMatrixWidget(QMainWindow):
         self.bucket_btn.clicked.connect(lambda: self._set_tool("bucket"))
         self.select_btn.clicked.connect(lambda: self._set_tool("select"))
 
-        select_mode_label = QLabel("Select Mode")
+        self.select_mode_label = QLabel("Select Mode")
         self.select_rect_btn = QPushButton("Rect")
         self.select_pen_btn = QPushButton("Pen")
         self.select_rect_btn.setCheckable(True)
@@ -626,7 +626,7 @@ class LedMatrixWidget(QMainWindow):
         layout.addWidget(self.line_btn)
         layout.addWidget(self.bucket_btn)
         layout.addWidget(self.select_btn)
-        layout.addWidget(select_mode_label)
+        layout.addWidget(self.select_mode_label)
         layout.addWidget(self.select_rect_btn)
         layout.addWidget(self.select_pen_btn)
         layout.addWidget(self.deselect_btn)
@@ -639,6 +639,8 @@ class LedMatrixWidget(QMainWindow):
         layout.addWidget(self.save_btn)
         layout.addWidget(self.load_btn)
         layout.addStretch(1)
+
+        self._set_select_ui_visible(False)
 
         return panel
 
@@ -724,6 +726,7 @@ class LedMatrixWidget(QMainWindow):
             self.bucket_btn.setChecked(True)
         elif tool == "select":
             self.select_btn.setChecked(True)
+        self._set_select_ui_visible(tool == "select")
 
     def _toggle_pen_drag(self) -> None:
         self.pen_drag_toggle.setChecked(not self.pen_drag_toggle.isChecked())
@@ -742,6 +745,12 @@ class LedMatrixWidget(QMainWindow):
         scene = self.current_scene()
         if scene:
             scene.clear_selection()
+
+    def _set_select_ui_visible(self, visible: bool) -> None:
+        self.select_mode_label.setVisible(visible)
+        self.select_rect_btn.setVisible(visible)
+        self.select_pen_btn.setVisible(visible)
+        self.deselect_btn.setVisible(visible)
 
     def current_tab(self) -> dict | None:
         idx = self.tab_widget.currentIndex()
