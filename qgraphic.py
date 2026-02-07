@@ -26,15 +26,10 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.cmd == "gui":
         from PyQt5.QtWidgets import QApplication
-        from Engine.engine import Frame
-        from GUI.framedisplayer import LedMatrixWidget, deserialize_frame
+        from GUI.mainwindow import QGraphicMainWindow
 
         app = QApplication.instance() or QApplication([])
-        frame = Frame()
-        if args.file:
-            data = Path(args.file).read_bytes()
-            frame.display = deserialize_frame(data)
-        w = LedMatrixWidget(frame)
+        w = QGraphicMainWindow(canvas_file=Path(args.file) if args.file else None)
         w.show()
         app.exec_()
         return 0

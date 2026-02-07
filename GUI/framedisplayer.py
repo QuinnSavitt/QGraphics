@@ -26,10 +26,11 @@ from PyQt5.QtWidgets import (
     QScrollArea,
     QSplitter,
     QToolButton,
+    QShortcut,
 )
 from PyQt5.QtGui import QKeySequence
-from PyQt5.QtGui import QColor, QBrush, QPen, QPainter
-from PyQt5.QtCore import Qt, QRectF, QTimer
+from PyQt5.QtGui import QColor, QBrush, QPen, QPainter, QPainterPath
+from PyQt5.QtCore import Qt, QRectF, QTimer, QFileInfo
 from PyQt5.QtWidgets import QSpinBox, QDoubleSpinBox, QComboBox, QRadioButton
 
 # Ensure parent directory is in sys.path for import
@@ -96,15 +97,27 @@ class LedMatrixScene(QGraphicsScene):
         self.pen_drag_paint = False
         self._rect_preview = None
         self._rect_start = None
+        self._oval_preview = None
+        self._oval_start = None
         self._select_preview = None
         self._select_start = None
         self._line_preview = None
         self._line_start = None
         self._line_end = None
+        self._curve_preview = None
+        self._curve_start = None
+        self._curve_end = None
+        self._curve_control = None
+        self._line_mode = "line"  # line | curve
         self._action_active = False
         self._bucket_pending = None
         self._selection: set[tuple[int, int]] = set()
-        self._select_mode = "rect"  # rect | pen | fill
+        self._select_mode = "rect"  # rect | pen | fill | move
+        self._move_active = False
+        self._move_start = None
+        self._move_colors: dict[tuple[int, int], tuple[int, int, int]] = {}
+        self._move_preview: set[tuple[int, int]] = set()
+        self._move_offset = (0, 0)
         self.items_grid: list[list[PixelItem]] = []
         self._build_grid()
 
@@ -143,12 +156,16 @@ class LedMatrixScene(QGraphicsScene):
     def set_select_mode(self, mode: str) -> None:
         self._select_mode = mode
 
+    def set_line_mode(self, mode: str) -> None:
+        self._line_mode = mode
+
     def clear_selection(self) -> None:
         if not self._selection:
             return
         for (x, y) in self._selection:
             self.items_grid[y][x].setPen(self.items_grid[y][x].default_pen)
         self._selection.clear()
+        self._clear_move_preview()
 
     def mousePressEvent(self, event):
         view = self.views()[0] if self.views() else None
@@ -169,17 +186,41 @@ class LedMatrixScene(QGraphicsScene):
                         QPen(QColor(220, 220, 220), 2, Qt.DashLine),
                         QBrush(Qt.transparent),
                     )
-            elif tool == "line" and event.button() == Qt.LeftButton:
+            elif tool == "oval" and event.button() == Qt.LeftButton:
                 self._begin_action(view)
-                self._line_start = event.scenePos()
-                if self._line_preview is None:
-                    self._line_preview = self.addLine(
-                        self._line_start.x(),
-                        self._line_start.y(),
-                        self._line_start.x(),
-                        self._line_start.y(),
+                self._oval_start = event.scenePos()
+                if self._oval_preview is None:
+                    self._oval_preview = self.addEllipse(
+                        QRectF(self._oval_start, self._oval_start),
                         QPen(QColor(220, 220, 220), 2, Qt.DashLine),
+                        QBrush(Qt.transparent),
                     )
+            elif tool == "line" and event.button() == Qt.LeftButton:
+                if self._line_mode == "line":
+                    self._begin_action(view)
+                    self._line_start = event.scenePos()
+                    if self._line_preview is None:
+                        self._line_preview = self.addLine(
+                            self._line_start.x(),
+                            self._line_start.y(),
+                            self._line_start.x(),
+                            self._line_start.y(),
+                            QPen(QColor(220, 220, 220), 2, Qt.DashLine),
+                        )
+                else:
+                    if self._curve_start is None:
+                        self._begin_action(view)
+                        self._curve_start = event.scenePos()
+                        self._curve_end = event.scenePos()
+                        if self._curve_preview is None:
+                            self._curve_preview = self.addPath(
+                                QPainterPath(),
+                                QPen(QColor(220, 220, 220), 2, Qt.DashLine),
+                            )
+                    elif self._curve_end is not None and self._curve_control is None:
+                        self._curve_control = event.scenePos()
+                        self._apply_curve()
+                        self._commit_action(view)
             elif tool == "bucket" and event.button() == Qt.LeftButton:
                 self._begin_action(view)
                 self._bucket_pending = event.scenePos()
@@ -196,6 +237,8 @@ class LedMatrixScene(QGraphicsScene):
                     self._select_at(event.scenePos(), view)
                 elif self._select_mode == "fill":
                     self._select_fill(event.scenePos())
+                elif self._select_mode == "move":
+                    self._start_move(event.scenePos(), view)
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event):
@@ -212,22 +255,38 @@ class LedMatrixScene(QGraphicsScene):
                 if event.modifiers() & Qt.ShiftModifier:
                     rect = self._square_rect(self._rect_start, event.scenePos())
                 self._rect_preview.setRect(rect)
-            elif tool == "line" and self._line_preview is not None and self._line_start is not None:
-                end = event.scenePos()
+            elif tool == "oval" and self._oval_preview is not None and self._oval_start is not None:
+                rect = QRectF(self._oval_start, event.scenePos()).normalized()
                 if event.modifiers() & Qt.ShiftModifier:
-                    end = self._snap_line_end(self._line_start, end)
-                self._line_end = end
-                self._line_preview.setLine(
-                    self._line_start.x(),
-                    self._line_start.y(),
-                    end.x(),
-                    end.y(),
-                )
+                    rect = self._square_rect(self._oval_start, event.scenePos())
+                self._oval_preview.setRect(rect)
+            elif tool == "line":
+                if self._line_mode == "line" and self._line_preview is not None and self._line_start is not None:
+                    end = event.scenePos()
+                    if event.modifiers() & Qt.ShiftModifier:
+                        end = self._snap_line_end(self._line_start, end)
+                    self._line_end = end
+                    self._line_preview.setLine(
+                        self._line_start.x(),
+                        self._line_start.y(),
+                        end.x(),
+                        end.y(),
+                    )
+                elif self._line_mode == "curve" and self._curve_start is not None and self._curve_control is None:
+                    if event.buttons() & Qt.LeftButton:
+                        # dragging to set end
+                        self._curve_end = event.scenePos()
+                        self._update_curve_preview(self._curve_end)
+                    else:
+                        # after drag release: mouse position sets control preview
+                        self._update_curve_preview(event.scenePos())
             elif tool == "select" and self._select_mode == "rect" and self._select_preview is not None and self._select_start is not None:
                 rect = QRectF(self._select_start, event.scenePos()).normalized()
                 self._select_preview.setRect(rect)
             elif tool == "select" and self._select_mode == "pen" and (event.buttons() & Qt.LeftButton):
                 self._select_at(event.scenePos(), view)
+            elif tool == "select" and self._select_mode == "move" and self._move_active:
+                self._update_move_preview(event.scenePos())
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event):
@@ -241,15 +300,27 @@ class LedMatrixScene(QGraphicsScene):
                 self._apply_rect(rect)
                 self._rect_start = None
                 self._commit_action(view)
-            elif tool == "line" and self._line_preview is not None and self._line_start is not None:
-                line = self._line_preview.line()
-                self.removeItem(self._line_preview)
-                self._line_preview = None
-                end = self._line_end if self._line_end is not None else line.p2()
-                self._apply_line(line.x1(), line.y1(), end.x(), end.y())
-                self._line_start = None
-                self._line_end = None
+            elif tool == "oval" and self._oval_preview is not None and self._oval_start is not None:
+                rect = self._oval_preview.rect()
+                self.removeItem(self._oval_preview)
+                self._oval_preview = None
+                self._apply_oval(rect)
+                self._oval_start = None
                 self._commit_action(view)
+            elif tool == "line":
+                if self._line_mode == "line" and self._line_preview is not None and self._line_start is not None:
+                    line = self._line_preview.line()
+                    self.removeItem(self._line_preview)
+                    self._line_preview = None
+                    end = self._line_end if self._line_end is not None else line.p2()
+                    self._apply_line(line.x1(), line.y1(), end.x(), end.y())
+                    self._line_start = None
+                    self._line_end = None
+                    self._commit_action(view)
+                elif self._line_mode == "curve" and self._curve_start is not None and self._curve_control is None:
+                    if self._curve_end is None:
+                        self._curve_end = event.scenePos()
+                    self._update_curve_preview(event.scenePos())
             elif tool == "bucket" and self._bucket_pending is not None:
                 self._apply_bucket(self._bucket_pending)
                 self._bucket_pending = None
@@ -260,6 +331,8 @@ class LedMatrixScene(QGraphicsScene):
                 self._select_preview = None
                 self._apply_select_rect(rect)
                 self._select_start = None
+            elif tool == "select" and self._select_mode == "move" and self._move_active:
+                self._commit_move()
             elif tool == "pen" and self._action_active:
                 self._commit_action(view)
         super().mouseReleaseEvent(event)
@@ -287,6 +360,17 @@ class LedMatrixScene(QGraphicsScene):
             for x in range(min(x1, x2), max(x1, x2) + 1):
                 self.frame.display[y][x] = (r5, g6, b5)
                 self.items_grid[y][x].setBrush(QBrush(rgb565_to_qcolor(r5, g6, b5)))
+
+    def _apply_oval(self, rect: QRectF) -> None:
+        if rect.isNull():
+            return
+        r5, g6, b5 = self.current_color
+        x1 = int(rect.left() // (self.cell_size + self.margin))
+        y1 = int(rect.top() // (self.cell_size + self.margin))
+        x2 = int(rect.right() // (self.cell_size + self.margin))
+        y2 = int(rect.bottom() // (self.cell_size + self.margin))
+        self.frame.makeOval(x1, y1, x2, y2, r5, g6, b5)
+        self.refresh_from_frame()
 
     def _square_rect(self, start, end) -> QRectF:
         dx = end.x() - start.x()
@@ -316,6 +400,30 @@ class LedMatrixScene(QGraphicsScene):
         gx2, gy2 = self._scene_to_grid(x2, y2)
         self.frame.makeLine(gx1, gy1, gx2, gy2, r5, g6, b5)
         self.refresh_from_frame()
+
+    def _apply_curve(self) -> None:
+        if self._curve_start is None or self._curve_end is None or self._curve_control is None:
+            return
+        r5, g6, b5 = self.current_color
+        gx1, gy1 = self._scene_to_grid(self._curve_start.x(), self._curve_start.y())
+        gx2, gy2 = self._scene_to_grid(self._curve_end.x(), self._curve_end.y())
+        gcx, gcy = self._scene_to_grid(self._curve_control.x(), self._curve_control.y())
+        self.frame.makeCurve(gx1, gy1, gx2, gy2, gcx, gcy, r5, g6, b5)
+        self.refresh_from_frame()
+        if self._curve_preview is not None:
+            self.removeItem(self._curve_preview)
+            self._curve_preview = None
+        self._curve_start = None
+        self._curve_end = None
+        self._curve_control = None
+
+    def _update_curve_preview(self, control_pos) -> None:
+        if self._curve_preview is None or self._curve_start is None or self._curve_end is None:
+            return
+        path = QPainterPath()
+        path.moveTo(self._curve_start)
+        path.quadTo(control_pos, self._curve_end)
+        self._curve_preview.setPath(path)
 
     def _snap_line_end(self, start, end):
         dx = end.x() - start.x()
@@ -406,6 +514,69 @@ class LedMatrixScene(QGraphicsScene):
             if y < 31:
                 stack.append((x, y + 1))
 
+    def _start_move(self, pos, view) -> None:
+        item = self.itemAt(pos, view.transform())
+        if not isinstance(item, PixelItem) or (item.x, item.y) not in self._selection:
+            return
+        self._begin_action(view)
+        self._move_active = True
+        self._move_start = pos
+        self._move_colors = {coord: self.frame.display[coord[1]][coord[0]] for coord in self._selection}
+        self._move_offset = (0, 0)
+        self._update_move_preview(pos)
+
+    def _update_move_preview(self, pos) -> None:
+        if not self._move_active or self._move_start is None:
+            return
+        start_gx, start_gy = self._scene_to_grid(self._move_start.x(), self._move_start.y())
+        gx, gy = self._scene_to_grid(pos.x(), pos.y())
+        dx = gx - start_gx
+        dy = gy - start_gy
+        if (dx, dy) == self._move_offset:
+            return
+        self._move_offset = (dx, dy)
+        self._clear_move_preview()
+        preview = set()
+        for (x, y), color in self._move_colors.items():
+            nx = x + dx
+            ny = y + dy
+            if 0 <= nx < 64 and 0 <= ny < 32:
+                preview.add((nx, ny))
+                qc = rgb565_to_qcolor(*color)
+                qc.setAlpha(120)
+                self.items_grid[ny][nx].setBrush(QBrush(qc))
+        self._move_preview = preview
+
+    def _clear_move_preview(self) -> None:
+        if not self._move_preview:
+            return
+        for (x, y) in self._move_preview:
+            r, g, b = self.frame.display[y][x]
+            self.items_grid[y][x].setBrush(QBrush(rgb565_to_qcolor(r, g, b)))
+        self._move_preview.clear()
+
+    def _commit_move(self) -> None:
+        if not self._move_active:
+            return
+        dx, dy = self._move_offset
+        pixels = [((x, y), color) for (x, y), color in self._move_colors.items()]
+        self.frame.moveSelection(pixels, dx, dy)
+        self.refresh_from_frame()
+        new_selection = set()
+        for (x, y) in self._selection:
+            nx = x + dx
+            ny = y + dy
+            if 0 <= nx < 64 and 0 <= ny < 32:
+                new_selection.add((nx, ny))
+        self.clear_selection()
+        for (x, y) in new_selection:
+            self._add_to_selection(x, y)
+        self._move_active = False
+        self._move_start = None
+        self._move_colors = {}
+        self._move_offset = (0, 0)
+        self._commit_action(self.views()[0])
+
     def _add_to_selection(self, x: int, y: int) -> None:
         if (x, y) in self._selection:
             return
@@ -423,7 +594,7 @@ class LedMatrixScene(QGraphicsScene):
 class LedMatrixView(QGraphicsView):
     def __init__(self, scene: QGraphicsScene, parent=None):
         super().__init__(scene, parent)
-        self.tool_mode = "pen"  # pen | pan | rect | line | bucket | select
+        self.tool_mode = "pen"  # pen | pan | rect | oval | line | bucket | select
         self.setDragMode(QGraphicsView.NoDrag)
         self._temp_pan = False
 
@@ -516,12 +687,24 @@ class LedMatrixWidget(QMainWindow):
         if view and scene:
             view.fitInView(scene.sceneRect(), Qt.KeepAspectRatio)
 
+    def display_frame(self, frame: Frame) -> None:
+        tab = self.current_tab()
+        if not tab:
+            return
+        # Copy display data into the current tab's frame.
+        tab["frame"].display = [list(row) for row in frame.display]
+        tab["scene"].refresh_from_frame()
+        tab["undo"].clear()
+        tab["redo"].clear()
+        tab["action_before"] = None
+
     def _add_tab(self, title: str, frame: Frame | None = None) -> None:
         frame = frame or Frame()
         scene = LedMatrixScene(frame)
         view = LedMatrixView(scene)
         view.setRenderHint(QPainter.Antialiasing, True)
         view.setFocusPolicy(Qt.StrongFocus)
+        view.setMouseTracking(True)
         view.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         view.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         view.setTransformationAnchor(QGraphicsView.AnchorViewCenter)
@@ -536,6 +719,8 @@ class LedMatrixWidget(QMainWindow):
             "redo": [],
             "action_before": None,
             "temp_pan_prev_tool": None,
+            "filename": None,
+            "dirty": False,
         }
         scene.on_begin_action = lambda t=tab: self.begin_action(t)
         scene.on_commit_action = lambda t=tab: self.commit_action(t)
@@ -550,11 +735,28 @@ class LedMatrixWidget(QMainWindow):
         if self.tab_widget.count() <= 1:
             return
         widget = self.tab_widget.widget(index)
-        self.tab_widget.removeTab(index)
-        for i, tab in enumerate(self.tabs):
-            if tab["view"] is widget:
-                self.tabs.pop(i)
+        tab = None
+        for i, t in enumerate(self.tabs):
+            if t["view"] is widget:
+                tab = t
+                tab_index = i
                 break
+        if tab and tab.get("dirty"):
+            choice = QMessageBox.question(
+                self,
+                "Unsaved Changes",
+                "This tab has unsaved changes. Save before closing?",
+                QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel,
+                QMessageBox.Cancel,
+            )
+            if choice == QMessageBox.Cancel:
+                return
+            if choice == QMessageBox.Yes:
+                if not self._save_qgc(forced_tab=tab):
+                    return
+        self.tab_widget.removeTab(index)
+        if tab:
+            self.tabs.pop(tab_index)
 
     def _on_tab_changed(self, index: int) -> None:
         tab = self.current_tab()
@@ -606,12 +808,14 @@ class LedMatrixWidget(QMainWindow):
         self.pen_btn = QPushButton("Pen")
         self.pan_btn = QPushButton("Pan/Zoom")
         self.rect_btn = QPushButton("Rect")
+        self.oval_btn = QPushButton("Oval")
         self.line_btn = QPushButton("Line")
         self.bucket_btn = QPushButton("Bucket")
         self.select_btn = QPushButton("Select")
         self.pen_btn.setCheckable(True)
         self.pan_btn.setCheckable(True)
         self.rect_btn.setCheckable(True)
+        self.oval_btn.setCheckable(True)
         self.line_btn.setCheckable(True)
         self.bucket_btn.setCheckable(True)
         self.select_btn.setCheckable(True)
@@ -621,32 +825,51 @@ class LedMatrixWidget(QMainWindow):
         self.tool_group.addButton(self.pen_btn)
         self.tool_group.addButton(self.pan_btn)
         self.tool_group.addButton(self.rect_btn)
+        self.tool_group.addButton(self.oval_btn)
         self.tool_group.addButton(self.line_btn)
         self.tool_group.addButton(self.bucket_btn)
         self.tool_group.addButton(self.select_btn)
         self.pen_btn.clicked.connect(lambda: self._set_tool("pen"))
         self.pan_btn.clicked.connect(lambda: self._set_tool("pan"))
         self.rect_btn.clicked.connect(lambda: self._set_tool("rect"))
+        self.oval_btn.clicked.connect(lambda: self._set_tool("oval"))
         self.line_btn.clicked.connect(lambda: self._set_tool("line"))
         self.bucket_btn.clicked.connect(lambda: self._set_tool("bucket"))
         self.select_btn.clicked.connect(lambda: self._set_tool("select"))
+
+        self.line_mode_label = QLabel("Line Mode")
+        self.line_line_btn = QPushButton("Line")
+        self.line_curve_btn = QPushButton("Curve")
+        self.line_line_btn.setCheckable(True)
+        self.line_curve_btn.setCheckable(True)
+        self.line_line_btn.setChecked(True)
+        self.line_group = QButtonGroup(self)
+        self.line_group.setExclusive(True)
+        self.line_group.addButton(self.line_line_btn)
+        self.line_group.addButton(self.line_curve_btn)
+        self.line_line_btn.clicked.connect(lambda: self._set_line_mode("line"))
+        self.line_curve_btn.clicked.connect(lambda: self._set_line_mode("curve"))
 
         self.select_mode_label = QLabel("Select Mode")
         self.select_rect_btn = QPushButton("Rect")
         self.select_pen_btn = QPushButton("Pen")
         self.select_fill_btn = QPushButton("Fill")
+        self.select_move_btn = QPushButton("Move")
         self.select_rect_btn.setCheckable(True)
         self.select_pen_btn.setCheckable(True)
         self.select_fill_btn.setCheckable(True)
+        self.select_move_btn.setCheckable(True)
         self.select_rect_btn.setChecked(True)
         self.select_group = QButtonGroup(self)
         self.select_group.setExclusive(True)
         self.select_group.addButton(self.select_rect_btn)
         self.select_group.addButton(self.select_pen_btn)
         self.select_group.addButton(self.select_fill_btn)
+        self.select_group.addButton(self.select_move_btn)
         self.select_rect_btn.clicked.connect(lambda: self._set_select_mode("rect"))
         self.select_pen_btn.clicked.connect(lambda: self._set_select_mode("pen"))
         self.select_fill_btn.clicked.connect(lambda: self._set_select_mode("fill"))
+        self.select_move_btn.clicked.connect(lambda: self._set_select_mode("move"))
 
         self.deselect_btn = QPushButton("Deselect")
         self.deselect_btn.clicked.connect(self._deselect)
@@ -674,13 +897,18 @@ class LedMatrixWidget(QMainWindow):
         tool_layout.addWidget(self.pen_btn)
         tool_layout.addWidget(self.pan_btn)
         tool_layout.addWidget(self.rect_btn)
+        tool_layout.addWidget(self.oval_btn)
         tool_layout.addWidget(self.line_btn)
+        tool_layout.addWidget(self.line_mode_label)
+        tool_layout.addWidget(self.line_line_btn)
+        tool_layout.addWidget(self.line_curve_btn)
         tool_layout.addWidget(self.bucket_btn)
         tool_layout.addWidget(self.select_btn)
         tool_layout.addWidget(self.select_mode_label)
         tool_layout.addWidget(self.select_rect_btn)
         tool_layout.addWidget(self.select_pen_btn)
         tool_layout.addWidget(self.select_fill_btn)
+        tool_layout.addWidget(self.select_move_btn)
         tool_layout.addWidget(self.deselect_btn)
         tool_layout.addWidget(self.pen_drag_toggle)
         tool_layout.addStretch(1)
@@ -699,6 +927,7 @@ class LedMatrixWidget(QMainWindow):
         layout.addStretch(1)
 
         self._set_select_ui_visible(False)
+        self._set_line_ui_visible(False)
 
         return tool_panel, panel
 
@@ -795,14 +1024,23 @@ class LedMatrixWidget(QMainWindow):
     def _install_shortcuts(self) -> None:
         QShortcut(QKeySequence("Ctrl+Z"), self, activated=self.undo)
         QShortcut(QKeySequence("Ctrl+Shift+Z"), self, activated=self.redo)
-        QShortcut(QKeySequence("Ctrl+S"), self, activated=self._save_qgc)
+        QShortcut(QKeySequence("Ctrl+S"), self, activated=lambda: self._save_qgc())
+        QShortcut(QKeySequence("Ctrl+Shift+S"), self, activated=lambda: self._save_qgc(save_as=True))
         QShortcut(QKeySequence("Ctrl+D"), self, activated=self._deselect)
+        QShortcut(QKeySequence("Ctrl+="), self, activated=lambda: self._zoom_canvas(1.15))
+        QShortcut(QKeySequence("Ctrl+-"), self, activated=lambda: self._zoom_canvas(1 / 1.15))
         QShortcut(QKeySequence("L"), self, activated=lambda: self._set_tool("line"))
         QShortcut(QKeySequence("R"), self, activated=lambda: self._set_tool("rect"))
+        QShortcut(QKeySequence("C"), self, activated=lambda: self._set_tool("oval"))
         QShortcut(QKeySequence("P"), self, activated=lambda: self._set_tool("pen"))
         QShortcut(QKeySequence("B"), self, activated=lambda: self._set_tool("bucket"))
         QShortcut(QKeySequence("S"), self, activated=lambda: self._set_tool("select"))
         QShortcut(QKeySequence("O"), self, activated=self._toggle_pen_drag)
+
+    def _zoom_canvas(self, factor: float) -> None:
+        view = self.current_view()
+        if view:
+            view.scale(factor, factor)
 
     def _set_tool(self, tool: str) -> None:
         view = self.current_view()
@@ -815,6 +1053,8 @@ class LedMatrixWidget(QMainWindow):
             self.pan_btn.setChecked(True)
         elif tool == "rect":
             self.rect_btn.setChecked(True)
+        elif tool == "oval":
+            self.oval_btn.setChecked(True)
         elif tool == "line":
             self.line_btn.setChecked(True)
         elif tool == "bucket":
@@ -822,6 +1062,7 @@ class LedMatrixWidget(QMainWindow):
         elif tool == "select":
             self.select_btn.setChecked(True)
         self._set_select_ui_visible(tool == "select")
+        self._set_line_ui_visible(tool == "line")
 
     def _toggle_pen_drag(self) -> None:
         self.pen_drag_toggle.setChecked(not self.pen_drag_toggle.isChecked())
@@ -836,6 +1077,16 @@ class LedMatrixWidget(QMainWindow):
         if scene:
             scene.set_select_mode(mode)
 
+    def _set_line_mode(self, mode: str) -> None:
+        scene = self.current_scene()
+        if scene:
+            scene.set_line_mode(mode)
+
+    def _set_line_ui_visible(self, visible: bool) -> None:
+        self.line_mode_label.setVisible(visible)
+        self.line_line_btn.setVisible(visible)
+        self.line_curve_btn.setVisible(visible)
+
     def _deselect(self) -> None:
         scene = self.current_scene()
         if scene:
@@ -845,6 +1096,8 @@ class LedMatrixWidget(QMainWindow):
         self.select_mode_label.setVisible(visible)
         self.select_rect_btn.setVisible(visible)
         self.select_pen_btn.setVisible(visible)
+        self.select_fill_btn.setVisible(visible)
+        self.select_move_btn.setVisible(visible)
         self.deselect_btn.setVisible(visible)
 
     def current_tab(self) -> dict | None:
@@ -884,6 +1137,8 @@ class LedMatrixWidget(QMainWindow):
             if len(tab["undo"]) > 5:
                 tab["undo"] = tab["undo"][-5:]
             tab["redo"].clear()
+            tab["dirty"] = True
+            self._update_tab_title(tab)
         tab["action_before"] = None
 
     def undo(self) -> None:
@@ -907,26 +1162,43 @@ class LedMatrixWidget(QMainWindow):
     def _clone_display(self, display):
         return [list(row) for row in display]
 
-    def _save_qgc(self) -> None:
-        filename, _ = QFileDialog.getSaveFileName(
-            self,
-            "Save Frame",
-            "",
-            "QGraphic Frame (*.qgc)",
-        )
+    def _update_tab_title(self, tab: dict) -> None:
+        name = "Untitled"
+        if tab.get("filename"):
+            name = QFileInfo(tab["filename"]).fileName()
+        if tab.get("dirty"):
+            name = f"{name}*"
+        idx = self.tab_widget.indexOf(tab["view"])
+        if idx >= 0:
+            self.tab_widget.setTabText(idx, name)
+
+    def _save_qgc(self, save_as: bool = False, forced_tab: dict | None = None) -> bool:
+        tab = forced_tab or self.current_tab()
+        if not tab:
+            return False
+        filename = tab.get("filename") if not save_as else None
         if not filename:
-            return
-        if not filename.lower().endswith(".qgc"):
-            filename += ".qgc"
+            filename, _ = QFileDialog.getSaveFileName(
+                self,
+                "Save Frame",
+                "",
+                "QGraphic Frame (*.qgc)",
+            )
+            if not filename:
+                return False
+            if not filename.lower().endswith(".qgc"):
+                filename += ".qgc"
         try:
-            tab = self.current_tab()
-            if not tab:
-                return
             data = serialize_frame(tab["frame"])
             with open(filename, "wb") as f:
                 f.write(data)
+            tab["filename"] = filename
+            tab["dirty"] = False
+            self._update_tab_title(tab)
+            return True
         except Exception as exc:
             QMessageBox.critical(self, "Save Failed", str(exc))
+            return False
 
     def _load_qgc(self) -> None:
         filename, _ = QFileDialog.getOpenFileName(
@@ -949,6 +1221,9 @@ class LedMatrixWidget(QMainWindow):
             tab["undo"].clear()
             tab["redo"].clear()
             tab["action_before"] = None
+            tab["filename"] = filename
+            tab["dirty"] = False
+            self._update_tab_title(tab)
         except Exception as exc:
             QMessageBox.critical(self, "Load Failed", str(exc))
 

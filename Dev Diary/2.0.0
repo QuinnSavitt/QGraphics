@@ -1,0 +1,16 @@
+I have very quickly moved on to 2.0, but to be fair I thought 1.0 would take me longer. It's time to add native code support, and the ability to step through your code and see
+what happens. Here's a list of what's been added:
+
+- Code editor in GUI [DONE]
+-- Syntax highlighting[DONE]
+-- Auto-formatting [DONE]
+-- Color preview next to color objects [SCRAPPED TEMPORARILY]
+- Loading, editing, and saving qgc files in code. [DONE]
+- circle/oval tool (GUI + Engine + Built-in) [DONE, shockingly more difficult than expected]
+- curved line tool (GUI + Engine + Built-in) [DONE]
+- Tabs labeled as file name if possible, ctrl+s saves automatically, ctrl+shift+s to save as [DONE]
+- Move selection tool [DONE]
+
+
+This was a really fun update to work on, and having both the canvas and code editors is going to be really fun from here on out. I'm hoping to work on debug-style things next, then I think
+there's some subtle language changes I'd like to make before they slip away from me, then I want to start working on animations, API calls, and higher-level functions.

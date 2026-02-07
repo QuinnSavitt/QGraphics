@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
-from Engine.engine import Frame
+from Engine.engine import Frame, loadQGC, saveQGC
 
 from .lexer import Token, lex_file, lex_source
 from .parser import (
@@ -98,9 +98,10 @@ class Environment:
 
 
 class Interpreter:
-	def __init__(self) -> None:
+	def __init__(self, publish_handler: Optional[Callable[[Frame], None]] = None) -> None:
 		self.globals = Environment()
 		self._install_builtins()
+		self.publish_handler = publish_handler
 
 	def _install_builtins(self) -> None:
 		self.globals.define("Frame", self._builtin_frame)
@@ -115,6 +116,10 @@ class Interpreter:
 		self.globals.define("makeRect", self._builtin_make_rect)
 		self.globals.define("makeLine", self._builtin_make_line)
 		self.globals.define("Fill", self._builtin_fill)
+		self.globals.define("makeOval", self._builtin_make_oval)
+		self.globals.define("makeCurve", self._builtin_make_curve)
+		self.globals.define("LoadQGC", self._builtin_load_qgc)
+		self.globals.define("SaveQGC", self._builtin_save_qgc)
 
 	def run_file(self, path: str | Path) -> None:
 		tokens = lex_file(path)
@@ -332,6 +337,9 @@ class Interpreter:
 	def publish(self, value: Any) -> None:
 		if not isinstance(value, Frame):
 			raise RuntimeErrorWithLine("Publish expects a Frame", -1)
+		if self.publish_handler is not None:
+			self.publish_handler(value)
+			return
 		try:
 			from PyQt5.QtWidgets import QApplication
 			from GUI.framedisplayer import LedMatrixWidget
@@ -423,6 +431,51 @@ class Interpreter:
 			raise RuntimeErrorWithLine("Fourth arg must be color tuple", line)
 		r, g, b = color
 		frame.makeLine(int(x1), int(y1), int(x2), int(y2), int(r), int(g), int(b))
+
+	def _builtin_make_oval(self, args: List[Any], line: int) -> None:
+		if len(args) != 4:
+			raise RuntimeErrorWithLine("makeOval requires frame, p1, p2, color", line)
+		frame, p1, p2, color = args
+		if not isinstance(frame, Frame):
+			raise RuntimeErrorWithLine("First arg must be Frame", line)
+		x1, y1 = self._unwrap_point(p1, line)
+		x2, y2 = self._unwrap_point(p2, line)
+		if not (isinstance(color, tuple) and len(color) == 3):
+			raise RuntimeErrorWithLine("Fourth arg must be color tuple", line)
+		r, g, b = color
+		frame.makeOval(int(x1), int(y1), int(x2), int(y2), int(r), int(g), int(b))
+
+	def _builtin_make_curve(self, args: List[Any], line: int) -> None:
+		if len(args) != 5:
+			raise RuntimeErrorWithLine("makeCurve requires frame, p1, p2, control, color", line)
+		frame, p1, p2, ctrl, color = args
+		if not isinstance(frame, Frame):
+			raise RuntimeErrorWithLine("First arg must be Frame", line)
+		x1, y1 = self._unwrap_point(p1, line)
+		x2, y2 = self._unwrap_point(p2, line)
+		cx, cy = self._unwrap_point(ctrl, line)
+		if not (isinstance(color, tuple) and len(color) == 3):
+			raise RuntimeErrorWithLine("Fifth arg must be color tuple", line)
+		r, g, b = color
+		frame.makeCurve(int(x1), int(y1), int(x2), int(y2), int(cx), int(cy), int(r), int(g), int(b))
+
+	def _builtin_load_qgc(self, args: List[Any], line: int) -> Frame:
+		if len(args) != 1:
+			raise RuntimeErrorWithLine("LoadQGC requires path string", line)
+		path = args[0]
+		if not isinstance(path, str):
+			raise RuntimeErrorWithLine("Path must be string", line)
+		return loadQGC(path)
+
+	def _builtin_save_qgc(self, args: List[Any], line: int) -> None:
+		if len(args) != 2:
+			raise RuntimeErrorWithLine("SaveQGC requires frame and path string", line)
+		frame, path = args
+		if not isinstance(frame, Frame):
+			raise RuntimeErrorWithLine("First arg must be Frame", line)
+		if not isinstance(path, str):
+			raise RuntimeErrorWithLine("Path must be string", line)
+		saveQGC(frame, path)
 
 	def _builtin_fill(self, args: List[Any], line: int) -> None:
 		if len(args) != 4:

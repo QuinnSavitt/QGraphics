@@ -8,4 +8,5 @@ O: toggle drag
 B: Paint Bucket
 Ctrl+S: Save
 S: Select tool
+C: Oval tool
 Ctrl+D: deselect
