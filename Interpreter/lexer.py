@@ -19,6 +19,7 @@ KEYWORDS = {
 	"none",
 	"Do",
 	"Publish",
+	"Send",
 	"return",
 	"While",
 	"For",

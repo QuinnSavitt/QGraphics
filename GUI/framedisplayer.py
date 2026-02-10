@@ -3,6 +3,7 @@ import os
 import json
 import zlib
 import copy
+from datetime import datetime
 from PyQt5.QtWidgets import (
     QApplication,
     QMainWindow,
@@ -20,6 +21,7 @@ from PyQt5.QtWidgets import (
     QButtonGroup,
     QCheckBox,
     QFileDialog,
+    QInputDialog,
     QMessageBox,
     QShortcut,
     QTabWidget,
@@ -676,6 +678,7 @@ class LedMatrixWidget(QMainWindow):
         QTimer.singleShot(0, self._fit_view)
 
         self._temp_pan_prev_tool: dict | None = None
+        self._send_host, self._send_port = self._default_send_target()
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -881,8 +884,12 @@ class LedMatrixWidget(QMainWindow):
         file_label = QLabel("File")
         self.save_btn = QPushButton("Save .qgc")
         self.load_btn = QPushButton("Load .qgc")
+        self.send_btn = QPushButton("Send .qgc")
+        self.send_status = QLabel("Last send: (none)")
+        self.send_status.setObjectName("sendStatus")
         self.save_btn.clicked.connect(self._save_qgc)
         self.load_btn.clicked.connect(self._load_qgc)
+        self.send_btn.clicked.connect(self._send_qgc)
 
         history_label = QLabel("History")
         self.undo_btn = QPushButton("Undo")
@@ -924,6 +931,8 @@ class LedMatrixWidget(QMainWindow):
         layout.addWidget(file_label)
         layout.addWidget(self.save_btn)
         layout.addWidget(self.load_btn)
+        layout.addWidget(self.send_btn)
+        layout.addWidget(self.send_status)
         layout.addStretch(1)
 
         self._set_select_ui_visible(False)
@@ -955,6 +964,7 @@ class LedMatrixWidget(QMainWindow):
             QPushButton:pressed, QAbstractButton:pressed { background: #121A24; }
             QPushButton:checked { background: #1A2433; border-color: #3A506B; color: #E6E9EF; }
             QCheckBox { color: #C9CED6; }
+            #sendStatus { color: #8E97A6; font-size: 10px; }
             QTabBar::tab {
                 background: #121722;
                 color: #C9CED6;
@@ -1172,6 +1182,35 @@ class LedMatrixWidget(QMainWindow):
         if idx >= 0:
             self.tab_widget.setTabText(idx, name)
 
+    def _default_send_target(self) -> tuple[str, int]:
+        host = os.getenv("QGRAPHIC_HOST", "127.0.0.1")
+        port_text = os.getenv("QGRAPHIC_PORT")
+        if port_text:
+            try:
+                return host, int(port_text)
+            except ValueError:
+                return host, 4242
+        return host, 4242
+
+    def _prompt_send_target(self) -> tuple[str, int] | None:
+        host, ok = QInputDialog.getText(self, "Send Frame", "Host:", text=self._send_host)
+        if not ok or not host:
+            return None
+        port, ok = QInputDialog.getInt(self, "Send Frame", "Port:", value=self._send_port, min=1, max=65535)
+        if not ok:
+            return None
+        self._send_host = host
+        self._send_port = port
+        return host, port
+
+    def send_qgc_file(self, filename: str, out_path: str | None = None) -> str:
+        from Engine.engine import sendQGC
+        from Networking.sendfile import default_frame_path
+
+        resolved_out_path = default_frame_path() if out_path is None else out_path
+        sendQGC(filename, out_path=resolved_out_path)
+        return str(resolved_out_path)
+
     def _save_qgc(self, save_as: bool = False, forced_tab: dict | None = None) -> bool:
         tab = forced_tab or self.current_tab()
         if not tab:
@@ -1199,6 +1238,21 @@ class LedMatrixWidget(QMainWindow):
         except Exception as exc:
             QMessageBox.critical(self, "Save Failed", str(exc))
             return False
+
+    def _send_qgc(self) -> None:
+        tab = self.current_tab()
+        if not tab:
+            return
+        if tab.get("dirty") or not tab.get("filename"):
+            if not self._save_qgc(forced_tab=tab):
+                return
+        try:
+            resolved_path = self.send_qgc_file(tab["filename"])
+            timestamp = datetime.now().strftime("%H:%M:%S")
+            self.send_status.setText(f"Last send: {resolved_path} @ {timestamp}")
+        except Exception as exc:
+            self.send_status.setText(f"Send failed: {exc}")
+            QMessageBox.critical(self, "Send Failed", str(exc))
 
     def _load_qgc(self) -> None:
         filename, _ = QFileDialog.getOpenFileName(

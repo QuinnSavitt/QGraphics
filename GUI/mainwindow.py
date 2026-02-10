@@ -35,6 +35,7 @@ class QGraphicMainWindow(QMainWindow):
         self.canvas = LedMatrixWidget(frame)
         self.code = CodeEditorWidget()
         self.code.set_publish_handler(self._on_publish)
+        self.code.set_send_handler(self._on_send)
 
         self.top_tabs.addTab(self.canvas, "Canvas")
         self.top_tabs.addTab(self.code, "Code")
@@ -71,3 +72,6 @@ class QGraphicMainWindow(QMainWindow):
     def _on_publish(self, frame: Frame) -> None:
         self.canvas.display_frame(frame)
         self.top_tabs.setCurrentWidget(self.canvas)
+
+    def _on_send(self, path: str) -> None:
+        self.canvas.send_qgc_file(path)

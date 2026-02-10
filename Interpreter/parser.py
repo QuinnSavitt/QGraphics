@@ -59,6 +59,12 @@ class PublishStmt:
 
 
 @dataclass
+class SendStmt:
+	expr: object
+	line: int
+
+
+@dataclass
 class ReturnStmt:
 	expr: Optional[object]
 	line: int
@@ -296,6 +302,8 @@ class Parser:
 			return self.parse_var_decl()
 		if cur.value == "Publish":
 			return self.parse_publish_stmt()
+		if cur.value == "Send":
+			return self.parse_send_stmt()
 		if cur.value == "return":
 			return self.parse_return_stmt()
 		return self.parse_assignment_or_expr()
@@ -312,6 +320,11 @@ class Parser:
 		tok = self.expect_value("Publish")
 		expr = self.parse_expr()
 		return PublishStmt(expr, tok.line)
+
+	def parse_send_stmt(self) -> SendStmt:
+		tok = self.expect_value("Send")
+		expr = self.parse_expr()
+		return SendStmt(expr, tok.line)
 
 	def parse_return_stmt(self) -> ReturnStmt:
 		tok = self.expect_value("return")

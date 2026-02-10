@@ -29,6 +29,7 @@ SimpleStmt
      | PixelAssignStmt
      | CallStmt
      | PublishStmt
+    | SendStmt
      | ReturnStmt
      | ExprStmt ;
 
@@ -53,6 +54,9 @@ ArgList
 
 PublishStmt
     -> "Publish" Expr ;
+
+SendStmt
+    -> "Send" Expr ;
 
 ReturnStmt
     -> "return" [ "(" Expr ")" ] ;

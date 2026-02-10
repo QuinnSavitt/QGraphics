@@ -25,6 +25,7 @@ from .parser import (
 	PixelLit,
 	Program,
 	PublishStmt,
+	SendStmt,
 	ReturnStmt,
 	UnaryOp,
 	Var,
@@ -98,10 +99,15 @@ class Environment:
 
 
 class Interpreter:
-	def __init__(self, publish_handler: Optional[Callable[[Frame], None]] = None) -> None:
+	def __init__(
+		self,
+		publish_handler: Optional[Callable[[Frame], None]] = None,
+		send_handler: Optional[Callable[[str], None]] = None,
+	) -> None:
 		self.globals = Environment()
 		self._install_builtins()
 		self.publish_handler = publish_handler
+		self.send_handler = send_handler
 
 	def _install_builtins(self) -> None:
 		self.globals.define("Frame", self._builtin_frame)
@@ -164,6 +170,10 @@ class Interpreter:
 		if isinstance(stmt, PublishStmt):
 			value = self.eval_expr(stmt.expr, env)
 			self.publish(value)
+			return
+		if isinstance(stmt, SendStmt):
+			value = self.eval_expr(stmt.expr, env)
+			self.send(value)
 			return
 		if isinstance(stmt, ReturnStmt):
 			value = self.eval_expr(stmt.expr, env) if stmt.expr else None
@@ -349,6 +359,18 @@ class Interpreter:
 			app.exec_()
 		except Exception as exc:
 			raise RuntimeError(f"Failed to publish frame: {exc}") from exc
+
+	def send(self, value: Any) -> None:
+		if not isinstance(value, str):
+			raise RuntimeErrorWithLine("Send expects a path string", -1)
+		if self.send_handler is not None:
+			self.send_handler(value)
+			return
+		try:
+			from Engine.engine import sendQGC
+			sendQGC(value)
+		except Exception as exc:
+			raise RuntimeError(f"Failed to send frame: {exc}") from exc
 
 	def _builtin_set_red(self, args: List[Any], line: int) -> None:
 		self._builtin_set_channel(args, line, "red")

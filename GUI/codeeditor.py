@@ -77,6 +77,7 @@ class QGHighlighter(QSyntaxHighlighter):
         self.keyword_set = {
             "Do",
             "Publish",
+            "Send",
             "return",
             "While",
             "For",
@@ -627,6 +628,7 @@ class CodeEditorWidget(QWidget):
 
         self._tabs: list[CodeTab] = []
         self._publish_handler = None
+        self._send_handler = None
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -881,6 +883,9 @@ class CodeEditorWidget(QWidget):
     def set_publish_handler(self, handler) -> None:
         self._publish_handler = handler
 
+    def set_send_handler(self, handler) -> None:
+        self._send_handler = handler
+
     def _run_program(self) -> None:
         tab = self._active_tab()
         if tab is None:
@@ -889,7 +894,10 @@ class CodeEditorWidget(QWidget):
         try:
             from Interpreter.interpreter import Interpreter, RuntimeErrorWithLine
 
-            interp = Interpreter(publish_handler=self._publish_handler)
+            interp = Interpreter(
+                publish_handler=self._publish_handler,
+                send_handler=self._send_handler,
+            )
             interp.run_source(source)
         except RuntimeErrorWithLine as exc:
             QMessageBox.critical(self, "Runtime Error", str(exc))

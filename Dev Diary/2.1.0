@@ -1,0 +1,4 @@
+The matrix has arrived! This is a pretty small update adding the Send command. It took some remembering to make it github safe, but I think I'm chilling now.
+
+Update: I am an idiot. This was NOT a small update and involved quite a few large changes related to networking. I hate this. But it works now, and all the basics are operational!
+I can now get to work on the big features I want to implement, but I have a few QOL changes to make in 2.1.1 first.

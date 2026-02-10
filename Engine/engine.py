@@ -1,3 +1,6 @@
+from pathlib import Path
+
+
 class Frame:
     # Frame represents a 64x32 pixel display where each pixel is an RGB565 tuple.
     def __init__(self, start=None):
@@ -196,3 +199,49 @@ def loadQGC(path: str) -> Frame:
     if payload.get("w") != 64 or payload.get("h") != 32:
         raise ValueError("Unsupported frame size")
     return Frame(payload.get("pixels"))
+
+
+def frame_to_rgb565_bytes(frame: Frame) -> bytes:
+    if len(frame.display) != 32:
+        raise ValueError("Frame must have 32 rows")
+    for row in frame.display:
+        if len(row) != 64:
+            raise ValueError("Frame rows must have 64 pixels")
+
+    data = bytearray(64 * 32 * 2)
+    idx = 0
+    for y in range(32):
+        row = frame.display[y]
+        for x in range(64):
+            r, g, b = row[x]
+            value = ((int(r) & 0x1F) << 11) | ((int(g) & 0x3F) << 5) | (int(b) & 0x1F)
+            data[idx] = value & 0xFF
+            data[idx + 1] = (value >> 8) & 0xFF
+            idx += 2
+    return bytes(data)
+
+
+def _default_send_target() -> tuple[str, int]:
+    import os
+    from Networking.sendfile import DEFAULT_PORT
+
+    host = os.getenv("QGRAPHIC_HOST", "127.0.0.1")
+    port_text = os.getenv("QGRAPHIC_PORT")
+    if port_text:
+        try:
+            return host, int(port_text)
+        except ValueError:
+            return host, DEFAULT_PORT
+    return host, DEFAULT_PORT
+
+
+def sendQGC(
+    path: str,
+    out_path: str | Path | None = None,
+) -> None:
+    from Networking.sendfile import default_frame_path, send_frame_bytes
+
+    frame = loadQGC(path)
+    frame_bytes = frame_to_rgb565_bytes(frame)
+    resolved_out_path = default_frame_path() if out_path is None else out_path
+    send_frame_bytes(frame_bytes, out_path=resolved_out_path)
