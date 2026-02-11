@@ -120,8 +120,16 @@ class LedMatrixScene(QGraphicsScene):
         self._move_colors: dict[tuple[int, int], tuple[int, int, int]] = {}
         self._move_preview: set[tuple[int, int]] = set()
         self._move_offset = (0, 0)
+        self._action_color: tuple[int, int, int] | None = None
         self.items_grid: list[list[PixelItem]] = []
         self._build_grid()
+
+    def _active_color(self, override: tuple[int, int, int] | None = None) -> tuple[int, int, int]:
+        if override is not None:
+            return override
+        if self._action_color is not None:
+            return self._action_color
+        return self.current_color
 
     def _build_grid(self) -> None:
         self.clear()
@@ -173,14 +181,18 @@ class LedMatrixScene(QGraphicsScene):
         view = self.views()[0] if self.views() else None
         if view is not None:
             tool = getattr(view, "tool_mode", "pen")
-            if tool == "pen" and event.button() == Qt.LeftButton:
-                self._begin_action(view)
+            if event.button() == Qt.RightButton:
+                color_override = (0, 0, 0)
+            else:
+                color_override = None
+            if tool == "pen" and event.button() in (Qt.LeftButton, Qt.RightButton):
+                self._begin_action(view, color_override)
                 if self._selection:
                     self._apply_selection_color()
                 else:
-                    self._paint_at(event.scenePos(), view)
-            elif tool == "rect" and event.button() == Qt.LeftButton:
-                self._begin_action(view)
+                    self._paint_at(event.scenePos(), view, color_override)
+            elif tool == "rect" and event.button() in (Qt.LeftButton, Qt.RightButton):
+                self._begin_action(view, color_override)
                 self._rect_start = event.scenePos()
                 if self._rect_preview is None:
                     self._rect_preview = self.addRect(
@@ -188,8 +200,8 @@ class LedMatrixScene(QGraphicsScene):
                         QPen(QColor(220, 220, 220), 2, Qt.DashLine),
                         QBrush(Qt.transparent),
                     )
-            elif tool == "oval" and event.button() == Qt.LeftButton:
-                self._begin_action(view)
+            elif tool == "oval" and event.button() in (Qt.LeftButton, Qt.RightButton):
+                self._begin_action(view, color_override)
                 self._oval_start = event.scenePos()
                 if self._oval_preview is None:
                     self._oval_preview = self.addEllipse(
@@ -197,9 +209,9 @@ class LedMatrixScene(QGraphicsScene):
                         QPen(QColor(220, 220, 220), 2, Qt.DashLine),
                         QBrush(Qt.transparent),
                     )
-            elif tool == "line" and event.button() == Qt.LeftButton:
+            elif tool == "line" and event.button() in (Qt.LeftButton, Qt.RightButton):
                 if self._line_mode == "line":
-                    self._begin_action(view)
+                    self._begin_action(view, color_override)
                     self._line_start = event.scenePos()
                     if self._line_preview is None:
                         self._line_preview = self.addLine(
@@ -211,7 +223,7 @@ class LedMatrixScene(QGraphicsScene):
                         )
                 else:
                     if self._curve_start is None:
-                        self._begin_action(view)
+                        self._begin_action(view, color_override)
                         self._curve_start = event.scenePos()
                         self._curve_end = event.scenePos()
                         if self._curve_preview is None:
@@ -223,8 +235,8 @@ class LedMatrixScene(QGraphicsScene):
                         self._curve_control = event.scenePos()
                         self._apply_curve()
                         self._commit_action(view)
-            elif tool == "bucket" and event.button() == Qt.LeftButton:
-                self._begin_action(view)
+            elif tool == "bucket" and event.button() in (Qt.LeftButton, Qt.RightButton):
+                self._begin_action(view, color_override)
                 self._bucket_pending = event.scenePos()
             elif tool == "select" and event.button() == Qt.LeftButton:
                 if self._select_mode == "rect":
@@ -247,11 +259,12 @@ class LedMatrixScene(QGraphicsScene):
         view = self.views()[0] if self.views() else None
         if view is not None:
             tool = getattr(view, "tool_mode", "pen")
-            if tool == "pen" and self.pen_drag_paint and (event.buttons() & Qt.LeftButton):
+            if tool == "pen" and self.pen_drag_paint and (event.buttons() & (Qt.LeftButton | Qt.RightButton)):
+                color_override = (0, 0, 0) if (event.buttons() & Qt.RightButton) else None
                 if self._selection:
                     self._apply_selection_color()
                 else:
-                    self._paint_at(event.scenePos(), view)
+                    self._paint_at(event.scenePos(), view, color_override)
             elif tool == "rect" and self._rect_preview is not None and self._rect_start is not None:
                 rect = QRectF(self._rect_start, event.scenePos()).normalized()
                 if event.modifiers() & Qt.ShiftModifier:
@@ -339,17 +352,17 @@ class LedMatrixScene(QGraphicsScene):
                 self._commit_action(view)
         super().mouseReleaseEvent(event)
 
-    def _paint_at(self, pos, view) -> None:
+    def _paint_at(self, pos, view, color_override: tuple[int, int, int] | None = None) -> None:
         item = self.itemAt(pos, view.transform())
         if isinstance(item, PixelItem):
-            r5, g6, b5 = self.current_color
+            r5, g6, b5 = self._active_color(color_override)
             self.frame.display[item.y][item.x] = (r5, g6, b5)
             item.setBrush(QBrush(rgb565_to_qcolor(r5, g6, b5)))
 
     def _apply_rect(self, rect: QRectF) -> None:
         if rect.isNull():
             return
-        r5, g6, b5 = self.current_color
+        r5, g6, b5 = self._active_color()
         x1 = int(rect.left() // (self.cell_size + self.margin))
         y1 = int(rect.top() // (self.cell_size + self.margin))
         x2 = int(rect.right() // (self.cell_size + self.margin))
@@ -366,7 +379,7 @@ class LedMatrixScene(QGraphicsScene):
     def _apply_oval(self, rect: QRectF) -> None:
         if rect.isNull():
             return
-        r5, g6, b5 = self.current_color
+        r5, g6, b5 = self._active_color()
         x1 = int(rect.left() // (self.cell_size + self.margin))
         y1 = int(rect.top() // (self.cell_size + self.margin))
         x2 = int(rect.right() // (self.cell_size + self.margin))
@@ -382,11 +395,12 @@ class LedMatrixScene(QGraphicsScene):
         y2 = start.y() + (size if dy >= 0 else -size)
         return QRectF(start, end.__class__(x2, y2)).normalized()
 
-    def _begin_action(self, view) -> None:
+    def _begin_action(self, view, color_override: tuple[int, int, int] | None = None) -> None:
         if self._action_active:
             return
         if hasattr(self, "on_begin_action"):
             self.on_begin_action()
+        self._action_color = color_override
         self._action_active = True
 
     def _commit_action(self, view) -> None:
@@ -395,9 +409,10 @@ class LedMatrixScene(QGraphicsScene):
         if hasattr(self, "on_commit_action"):
             self.on_commit_action()
         self._action_active = False
+        self._action_color = None
 
     def _apply_line(self, x1: float, y1: float, x2: float, y2: float) -> None:
-        r5, g6, b5 = self.current_color
+        r5, g6, b5 = self._active_color()
         gx1, gy1 = self._scene_to_grid(x1, y1)
         gx2, gy2 = self._scene_to_grid(x2, y2)
         self.frame.makeLine(gx1, gy1, gx2, gy2, r5, g6, b5)
@@ -406,7 +421,7 @@ class LedMatrixScene(QGraphicsScene):
     def _apply_curve(self) -> None:
         if self._curve_start is None or self._curve_end is None or self._curve_control is None:
             return
-        r5, g6, b5 = self.current_color
+        r5, g6, b5 = self._active_color()
         gx1, gy1 = self._scene_to_grid(self._curve_start.x(), self._curve_start.y())
         gx2, gy2 = self._scene_to_grid(self._curve_end.x(), self._curve_end.y())
         gcx, gcy = self._scene_to_grid(self._curve_control.x(), self._curve_control.y())
@@ -444,7 +459,7 @@ class LedMatrixScene(QGraphicsScene):
     def _apply_bucket(self, pos) -> None:
         gx, gy = self._scene_to_grid(pos.x(), pos.y())
         target = self.frame.display[gy][gx]
-        replacement = self.current_color
+        replacement = self._active_color()
         if target == replacement:
             return
         w, h = 64, 32
@@ -469,7 +484,7 @@ class LedMatrixScene(QGraphicsScene):
         self.refresh_from_frame()
 
     def _apply_selection_color(self) -> None:
-        r5, g6, b5 = self.current_color
+        r5, g6, b5 = self._active_color()
         for (x, y) in self._selection:
             self.frame.display[y][x] = (r5, g6, b5)
             self.items_grid[y][x].setBrush(QBrush(rgb565_to_qcolor(r5, g6, b5)))
@@ -885,8 +900,6 @@ class LedMatrixWidget(QMainWindow):
         self.save_btn = QPushButton("Save .qgc")
         self.load_btn = QPushButton("Load .qgc")
         self.send_btn = QPushButton("Send .qgc")
-        self.send_status = QLabel("Last send: (none)")
-        self.send_status.setObjectName("sendStatus")
         self.save_btn.clicked.connect(self._save_qgc)
         self.load_btn.clicked.connect(self._load_qgc)
         self.send_btn.clicked.connect(self._send_qgc)
@@ -932,7 +945,6 @@ class LedMatrixWidget(QMainWindow):
         layout.addWidget(self.save_btn)
         layout.addWidget(self.load_btn)
         layout.addWidget(self.send_btn)
-        layout.addWidget(self.send_status)
         layout.addStretch(1)
 
         self._set_select_ui_visible(False)
@@ -964,7 +976,6 @@ class LedMatrixWidget(QMainWindow):
             QPushButton:pressed, QAbstractButton:pressed { background: #121A24; }
             QPushButton:checked { background: #1A2433; border-color: #3A506B; color: #E6E9EF; }
             QCheckBox { color: #C9CED6; }
-            #sendStatus { color: #8E97A6; font-size: 10px; }
             QTabBar::tab {
                 background: #121722;
                 color: #C9CED6;
@@ -1247,11 +1258,8 @@ class LedMatrixWidget(QMainWindow):
             if not self._save_qgc(forced_tab=tab):
                 return
         try:
-            resolved_path = self.send_qgc_file(tab["filename"])
-            timestamp = datetime.now().strftime("%H:%M:%S")
-            self.send_status.setText(f"Last send: {resolved_path} @ {timestamp}")
+            self.send_qgc_file(tab["filename"])
         except Exception as exc:
-            self.send_status.setText(f"Send failed: {exc}")
             QMessageBox.critical(self, "Send Failed", str(exc))
 
     def _load_qgc(self) -> None:
