@@ -1,0 +1,23 @@
+Soon, we will move to 3.0, and there will be a set of 3.X updates as we get into more stable development. I expect to do 10 of these before refocusing for 4.X stuff which will involve more engine-y stuff.
+
+Current planned updates:
+
+- Import/Library system
+- Draw objects (more clear functions that draw something specific with parameters. Technically already possible, but I'd like them to have their own type)
+- Mode objects (think like classes for specific drawings/animations that have their own internal functions and parameters, essentially instead of sending each canvas/animation, a mode will handle that)
+- Animation support (loop objects in code, as well as tooling in the editor)
+- In/Out transitions (relies on mode and animation objects to be implemented first)
+- Debugger/Runner in-house
+- Text support
+- IDE overhaul including linting and documentation support
+- Canvas GUI overhaul including icons and better-organized shortcuts
+- Comprehensive settings menus.
+
+PS: for those wondering, here are some features I expect to bring for 4.X updates
+
+- Download exe and guides to set up with your own matrix
+- TSPMO editor support
+- Support for different-sized canvasses
+- Effective .qgc and .qgca decompilation
+- Image support
+- API Support
