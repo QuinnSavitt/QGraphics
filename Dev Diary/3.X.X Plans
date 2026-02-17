@@ -7,7 +7,7 @@ Current planned updates:
 - Mode objects (think like classes for specific drawings/animations that have their own internal functions and parameters, essentially instead of sending each canvas/animation, a mode will handle that)
 - Animation support (loop objects in code, as well as tooling in the editor)
 - In/Out transitions (relies on mode and animation objects to be implemented first)
-- Debugger/Runner in-house
+- Debugger/Runner in-house [DONE]
 - Text support
 - IDE overhaul including linting and documentation support
 - Canvas GUI overhaul including icons and better-organized shortcuts

@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 import re
 
-from PyQt5.QtCore import QRect, QSize, Qt
+from PyQt5.QtCore import QRect, QSize, Qt, QTimer
 from PyQt5.QtGui import QColor, QFont, QPainter, QTextCharFormat, QTextFormat, QSyntaxHighlighter, QKeySequence
 from PyQt5.QtWidgets import (
     QFileDialog,
@@ -17,6 +17,7 @@ from PyQt5.QtWidgets import (
     QTextEdit,
     QSizePolicy,
     QShortcut,
+    QSlider,
     QSplitter,
     QTabWidget,
     QToolButton,
@@ -42,6 +43,14 @@ SAVE_BG = "#2A3142"
 SAVE_TEXT = "#C8D3F5"
 SAVE_HOVER = "#323B52"
 
+DEBUG_BG = "#F59E0B"
+DEBUG_TEXT = "#0F111A"
+DEBUG_HOVER = "#FBBF24"
+
+LIVE_BG = "#22D3EE"
+LIVE_TEXT = "#0F111A"
+LIVE_HOVER = "#67E8F9"
+
 # Load button color is not specified exactly; keep it "blue" while matching the dark chrome.
 LOAD_BG = "#3B82F6"
 LOAD_TEXT = "#0F111A"
@@ -62,6 +71,7 @@ CONSTANT = "#E0AF68"
 OPERATOR = "#89DDFF"
 COMMENT = "#565F89"
 BLOCK_CLOSER = "#F7768E"
+BREAKPOINT = "#F7768E"
 
 BRACKET_COLORS = ["#89DDFF", "#BB9AF7", "#9ECE6A"]
 
@@ -284,12 +294,17 @@ class LineNumberArea(QWidget):
     def paintEvent(self, event):
         self._editor.paint_line_number_area(event)
 
+    def mousePressEvent(self, event):
+        self._editor.line_number_area_mouse_press(event)
+
 
 class CodeEditor(QPlainTextEdit):
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self._line_number_area = LineNumberArea(self)
         self._highlighter = QGHighlighter(self.document())
+        self._breakpoints: set[int] = set()
+        self._debug_line: int | None = None
 
         QShortcut(QKeySequence("Ctrl+="), self, activated=self._zoom_in)
         QShortcut(QKeySequence("Ctrl+-"), self, activated=self._zoom_out)
@@ -599,6 +614,14 @@ class CodeEditor(QPlainTextEdit):
                     number,
                 )
 
+                if (block_number + 1) in self._breakpoints:
+                    radius = 4
+                    center_x = 6
+                    center_y = top + (self.fontMetrics().height() // 2)
+                    painter.setPen(QColor(BREAKPOINT))
+                    painter.setBrush(QColor(BREAKPOINT))
+                    painter.drawEllipse(center_x - radius, center_y - radius, radius * 2, radius * 2)
+
             block = block.next()
             block_number += 1
             top = bottom
@@ -614,7 +637,52 @@ class CodeEditor(QPlainTextEdit):
             selection.cursor = self.textCursor()
             selection.cursor.clearSelection()
             extra.append(selection)
+
+            if self._debug_line is not None:
+                debug_cursor = self.textCursor()
+                block = self.document().findBlockByNumber(self._debug_line - 1)
+                if block.isValid():
+                    debug_cursor.setPosition(block.position())
+                    debug_cursor.clearSelection()
+                    debug_sel = QTextEdit.ExtraSelection()
+                    debug_sel.format.setBackground(QColor("#2B2F45"))
+                    debug_sel.format.setProperty(QTextFormat.FullWidthSelection, True)
+                    debug_sel.cursor = debug_cursor
+                    extra.append(debug_sel)
         self.setExtraSelections(extra)
+
+    def set_debug_line(self, line_number: int | None) -> None:
+        self._debug_line = line_number
+        self._highlight_current_line()
+
+    def line_number_area_mouse_press(self, event) -> None:
+        if event.button() != Qt.LeftButton:
+            return
+
+        block = self.firstVisibleBlock()
+        block_number = block.blockNumber()
+        top = int(self.blockBoundingGeometry(block).translated(self.contentOffset()).top())
+        bottom = top + int(self.blockBoundingRect(block).height())
+        target_y = event.pos().y()
+
+        while block.isValid() and top <= target_y:
+            if block.isVisible() and bottom >= target_y:
+                self.toggle_breakpoint(block_number + 1)
+                return
+            block = block.next()
+            block_number += 1
+            top = bottom
+            bottom = top + int(self.blockBoundingRect(block).height())
+
+    def toggle_breakpoint(self, line_number: int) -> None:
+        if line_number in self._breakpoints:
+            self._breakpoints.remove(line_number)
+        else:
+            self._breakpoints.add(line_number)
+        self._line_number_area.update()
+
+    def breakpoint_lines(self) -> set[int]:
+        return set(self._breakpoints)
 
 
 @dataclass
@@ -629,6 +697,17 @@ class CodeEditorWidget(QWidget):
         self._tabs: list[CodeTab] = []
         self._publish_handler = None
         self._send_handler = None
+        self._preview_create = None
+        self._preview_update = None
+        self._preview_close = None
+        self._preview_tab_index: int | None = None
+        self._debug_iter = None
+        self._debug_current = None
+        self._debug_breakpoints: set[int] = set()
+        self._debug_mode: str | None = None
+        self._debug_steps_per_tick = 200
+        self._debug_timer = QTimer(self)
+        self._debug_timer.timeout.connect(self._debug_tick)
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -664,6 +743,46 @@ class CodeEditorWidget(QWidget):
         self.run_btn.setText("Run")
         self.run_btn.clicked.connect(self._run_program)
 
+        self.debug_btn = QToolButton()
+        self.debug_btn.setObjectName("debugButton")
+        self.debug_btn.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        self.debug_btn.setIcon(self.style().standardIcon(QStyle.SP_MediaPlay))
+        self.debug_btn.setText("Run Debugger")
+        self.debug_btn.clicked.connect(self._run_debugger)
+
+        self.step_btn = QToolButton()
+        self.step_btn.setObjectName("stepButton")
+        self.step_btn.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        self.step_btn.setIcon(self.style().standardIcon(QStyle.SP_ArrowForward))
+        self.step_btn.setText("Step")
+        self.step_btn.clicked.connect(self._debug_step)
+        self.step_btn.setVisible(False)
+
+        self.continue_btn = QToolButton()
+        self.continue_btn.setObjectName("continueButton")
+        self.continue_btn.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        self.continue_btn.setIcon(self.style().standardIcon(QStyle.SP_MediaPlay))
+        self.continue_btn.setText("Continue")
+        self.continue_btn.clicked.connect(self._debug_continue)
+        self.continue_btn.setVisible(False)
+
+        self.live_btn = QToolButton()
+        self.live_btn.setObjectName("liveButton")
+        self.live_btn.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        self.live_btn.setIcon(self.style().standardIcon(QStyle.SP_BrowserReload))
+        self.live_btn.setText("Live Run")
+        self.live_btn.clicked.connect(self._live_run)
+
+        self.live_speed = QSlider(Qt.Horizontal)
+        self.live_speed.setObjectName("liveSpeed")
+        self.live_speed.setRange(2, 100)
+        self.live_speed.setValue(30)
+        self.live_speed.setFixedWidth(140)
+        self.live_speed.valueChanged.connect(self._update_live_speed_label)
+
+        self.live_speed_label = QLabel("30 st/s")
+        self.live_speed_label.setObjectName("liveSpeedLabel")
+
         self.save_btn = QPushButton("Save")
         self.save_btn.setObjectName("saveButton")
         self.save_btn.clicked.connect(self.save)
@@ -673,6 +792,12 @@ class CodeEditorWidget(QWidget):
         self.load_btn.clicked.connect(self.load)
 
         tb.addWidget(self.run_btn)
+        tb.addWidget(self.debug_btn)
+        tb.addWidget(self.step_btn)
+        tb.addWidget(self.continue_btn)
+        tb.addWidget(self.live_btn)
+        tb.addWidget(self.live_speed)
+        tb.addWidget(self.live_speed_label)
         tb.addWidget(self.save_btn)
         tb.addWidget(self.load_btn)
         tb.addStretch(1)
@@ -778,6 +903,33 @@ class CodeEditorWidget(QWidget):
             #runButton:hover {{
                 background: {RUN_HOVER};
             }}
+            #debugButton {{
+                background: {DEBUG_BG};
+                color: {DEBUG_TEXT};
+                border: 1px solid {DIVIDER};
+                padding: 6px 10px;
+            }}
+            #debugButton:hover {{
+                background: {DEBUG_HOVER};
+            }}
+            #stepButton, #continueButton {{
+                background: {SAVE_BG};
+                color: {SAVE_TEXT};
+                border: 1px solid {DIVIDER};
+                padding: 6px 10px;
+            }}
+            #stepButton:hover, #continueButton:hover {{
+                background: {SAVE_HOVER};
+            }}
+            #liveButton {{
+                background: {LIVE_BG};
+                color: {LIVE_TEXT};
+                border: 1px solid {DIVIDER};
+                padding: 6px 10px;
+            }}
+            #liveButton:hover {{
+                background: {LIVE_HOVER};
+            }}
             #saveButton {{
                 background: {SAVE_BG};
                 color: {SAVE_TEXT};
@@ -795,6 +947,13 @@ class CodeEditorWidget(QWidget):
             }}
             #loadButton:hover {{
                 background: {LOAD_HOVER};
+            }}
+            #liveSpeed {{
+                background: {TOP_BAR_BG};
+            }}
+            #liveSpeedLabel {{
+                color: {INACTIVE_TAB_TEXT};
+                padding-left: 4px;
             }}
 
             /* Splitter divider */
@@ -886,6 +1045,11 @@ class CodeEditorWidget(QWidget):
     def set_send_handler(self, handler) -> None:
         self._send_handler = handler
 
+    def set_live_preview_handlers(self, create_handler, update_handler, close_handler) -> None:
+        self._preview_create = create_handler
+        self._preview_update = update_handler
+        self._preview_close = close_handler
+
     def _run_program(self) -> None:
         tab = self._active_tab()
         if tab is None:
@@ -903,6 +1067,155 @@ class CodeEditorWidget(QWidget):
             QMessageBox.critical(self, "Runtime Error", str(exc))
         except Exception as exc:
             QMessageBox.critical(self, "Run Failed", str(exc))
+
+    def _run_debugger(self) -> None:
+        if not self._prepare_debug_session("Debug Preview"):
+            return
+        self._show_debug_controls(False)
+        self._debug_mode = "continue"
+        self._debug_timer.start(0)
+
+    def _debug_continue(self) -> None:
+        if self._debug_iter is None:
+            return
+        self._show_debug_controls(False)
+        if self._debug_current is not None and self._debug_current.line in self._debug_breakpoints:
+            if not self._debug_advance():
+                return
+        self._debug_mode = "continue"
+        self._debug_timer.start(0)
+
+    def _debug_step(self) -> None:
+        if self._debug_iter is None:
+            return
+        if not self._prime_debug_iter():
+            return
+        if not self._debug_advance():
+            return
+        self._show_debug_controls(True)
+
+    def _live_run(self) -> None:
+        if not self._prepare_debug_session("Live Preview"):
+            return
+        self._show_debug_controls(False)
+        self._debug_mode = "live"
+        self._debug_timer.start(self._live_interval_ms())
+
+    def _debug_tick(self) -> None:
+        if self._debug_mode == "continue":
+            self._debug_continue_tick()
+            return
+        if self._debug_mode == "live":
+            self._debug_live_tick()
+
+    def _debug_continue_tick(self) -> None:
+        if not self._prime_debug_iter():
+            return
+        for _ in range(self._debug_steps_per_tick):
+            if self._debug_current is not None and self._debug_current.line in self._debug_breakpoints:
+                self._debug_timer.stop()
+                self._show_debug_controls(True)
+                return
+            if not self._debug_advance():
+                return
+
+    def _debug_live_tick(self) -> None:
+        if not self._prime_debug_iter():
+            return
+        if not self._debug_advance():
+            return
+
+    def _prepare_debug_session(self, preview_title: str) -> bool:
+        self._stop_debug_session()
+        tab = self._active_tab()
+        if tab is None:
+            return False
+
+        source = tab.editor.toPlainText()
+        self._debug_breakpoints = tab.editor.breakpoint_lines()
+
+        if self._preview_create is not None:
+            self._preview_tab_index = self._preview_create(preview_title)
+
+        try:
+            from Interpreter.interpreter import Interpreter
+
+            interp = Interpreter(
+                publish_handler=self._publish_handler,
+                send_handler=self._send_handler,
+            )
+            self._debug_iter = interp.run_source_steps(source, statement_end_handler=self._on_statement_end)
+            self._debug_current = None
+            return self._prime_debug_iter()
+        except Exception as exc:
+            QMessageBox.critical(self, "Run Failed", str(exc))
+            self._stop_debug_session()
+            return False
+
+    def _stop_debug_session(self) -> None:
+        if self._debug_timer.isActive():
+            self._debug_timer.stop()
+        self._debug_iter = None
+        self._debug_current = None
+        self._debug_mode = None
+        self._debug_breakpoints = set()
+        self._preview_tab_index = None
+        self._show_debug_controls(False)
+        tab = self._active_tab()
+        if tab:
+            tab.editor.set_debug_line(None)
+
+    def _prime_debug_iter(self) -> bool:
+        if self._debug_current is not None:
+            return True
+        return self._debug_advance()
+
+    def _debug_advance(self) -> bool:
+        if self._debug_iter is None:
+            return False
+        try:
+            self._debug_current = next(self._debug_iter)
+            tab = self._active_tab()
+            if tab:
+                tab.editor.set_debug_line(self._debug_current.line)
+            return True
+        except StopIteration:
+            self._stop_debug_session()
+            return False
+        except Exception as exc:
+            from Interpreter.interpreter import RuntimeErrorWithLine
+
+            if isinstance(exc, RuntimeErrorWithLine):
+                QMessageBox.critical(self, "Runtime Error", str(exc))
+            else:
+                QMessageBox.critical(self, "Run Failed", str(exc))
+            self._stop_debug_session()
+            return False
+
+    def _on_statement_end(self, frame) -> None:
+        if self._preview_update is None:
+            return
+        if self._preview_tab_index is None:
+            return
+        self._preview_update(self._preview_tab_index, frame)
+
+    def _show_debug_controls(self, show: bool) -> None:
+        self.step_btn.setVisible(show)
+        self.continue_btn.setVisible(show)
+
+    def _live_interval_ms(self) -> int:
+        rate = int(self.live_speed.value())
+        if rate < 2:
+            rate = 2
+        if rate > 100:
+            rate = 100
+        return max(1, int(1000 / rate))
+
+    def _update_live_speed_label(self) -> None:
+        value = int(self.live_speed.value())
+        self.live_speed_label.setText(f"{value} st/s")
+        if self._debug_mode == "live" and self._debug_timer.isActive():
+            self._debug_timer.setInterval(self._live_interval_ms())
 
     def _zoom_active_in(self) -> None:
         tab = self._active_tab()

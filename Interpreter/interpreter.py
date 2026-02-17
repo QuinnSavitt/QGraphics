@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, Generator, List, Optional
 
 from Engine.engine import Frame, loadQGC, saveQGC
 
@@ -73,6 +73,12 @@ class FunctionValue:
 	closure: "Environment"
 
 
+@dataclass
+class StepInfo:
+	line: int
+	stmt: Any
+
+
 class Environment:
 	def __init__(self, parent: Optional["Environment"] = None) -> None:
 		self.parent = parent
@@ -108,6 +114,8 @@ class Interpreter:
 		self._install_builtins()
 		self.publish_handler = publish_handler
 		self.send_handler = send_handler
+		self._statement_end_handler: Optional[Callable[[Frame], None]] = None
+		self._last_modified_frame: Optional[Frame] = None
 
 	def _install_builtins(self) -> None:
 		self.globals.define("Frame", self._builtin_frame)
@@ -136,6 +144,15 @@ class Interpreter:
 		program = parse(lex_source(source))
 		self.execute_program(program)
 
+	def run_source_steps(
+		self,
+		source: str,
+		statement_end_handler: Optional[Callable[[Frame], None]] = None,
+	) -> "Generator[StepInfo, None, None]":
+		self._statement_end_handler = statement_end_handler
+		program = parse(lex_source(source))
+		return self.execute_program_steps(program)
+
 	def execute_program(self, program: Program) -> None:
 		# Pre-register functions (forward references allowed)
 		for item in program.items:
@@ -155,7 +172,7 @@ class Interpreter:
 
 	def execute_stmt(self, stmt: Any, env: Environment) -> None:
 		if isinstance(stmt, VarDecl):
-			value = self.eval_expr(stmt.value, env) if stmt.value else TYPE_DEFAULTS[stmt.type_name]()
+			value = self.eval_expr(stmt.value, env) if stmt.value else self._default_value(stmt.type_name)
 			env.define(stmt.name, value)
 			return
 		if isinstance(stmt, Assign):
@@ -206,6 +223,193 @@ class Interpreter:
 	def execute_block(self, stmts: List[Any], env: Environment) -> None:
 		for stmt in stmts:
 			self.execute_stmt(stmt, env)
+
+	def execute_program_steps(self, program: Program) -> "Generator[StepInfo, None, None]":
+		for item in program.items:
+			if isinstance(item, FunctionDecl):
+				self.globals.define(item.name, FunctionValue(item, self.globals))
+
+		for item in program.items:
+			if isinstance(item, FunctionDecl):
+				continue
+			try:
+				yield from self.execute_stmt_steps(item, self.globals)
+			except RuntimeErrorWithLine:
+				raise
+			except Exception as exc:
+				line = getattr(item, "line", -1)
+				raise RuntimeErrorWithLine(str(exc), line) from exc
+
+	def execute_block_steps(self, stmts: List[Any], env: Environment) -> "Generator[StepInfo, None, None]":
+		for stmt in stmts:
+			yield from self.execute_stmt_steps(stmt, env)
+
+	def execute_stmt_steps(self, stmt: Any, env: Environment) -> "Generator[StepInfo, None, None]":
+		if isinstance(stmt, IfStmt):
+			yield StepInfo(stmt.line, stmt)
+			cond = yield from self.eval_expr_steps(stmt.condition, env)
+			if cond:
+				yield from self.execute_block_steps(stmt.then_body, env)
+			elif stmt.else_body is not None:
+				yield from self.execute_block_steps(stmt.else_body, env)
+			return
+		if isinstance(stmt, WhileStmt):
+			while True:
+				yield StepInfo(stmt.line, stmt)
+				cond = yield from self.eval_expr_steps(stmt.condition, env)
+				if not cond:
+					break
+				yield from self.execute_block_steps(stmt.body, env)
+			return
+		if isinstance(stmt, ForStmt):
+			iterable = yield from self.eval_expr_steps(stmt.iterable, env)
+			if not isinstance(iterable, list):
+				raise RuntimeErrorWithLine("For loop requires a list iterable", stmt.line)
+			for item in iterable:
+				yield StepInfo(stmt.line, stmt)
+				loop_env = Environment(env)
+				loop_env.define(stmt.var_name, item)
+				yield from self.execute_block_steps(stmt.body, loop_env)
+			return
+
+		yield StepInfo(getattr(stmt, "line", -1), stmt)
+		self._reset_statement_frame()
+		if isinstance(stmt, VarDecl):
+			value = (yield from self.eval_expr_steps(stmt.value, env)) if stmt.value else self._default_value(stmt.type_name)
+			env.define(stmt.name, value)
+			self._emit_statement_frame()
+			return
+		if isinstance(stmt, Assign):
+			value = yield from self.eval_expr_steps(stmt.value, env)
+			self.assign_target(stmt.target, value, env, stmt.line)
+			self._emit_statement_frame()
+			return
+		if isinstance(stmt, PixelAssign):
+			value = yield from self.eval_expr_steps(stmt.value, env)
+			ptr = yield from self.eval_expr_steps(stmt.pointer, env)
+			self.assign_pixel(ptr, value, stmt.line)
+			self._emit_statement_frame()
+			return
+		if isinstance(stmt, PublishStmt):
+			value = yield from self.eval_expr_steps(stmt.expr, env)
+			self.publish(value)
+			self._emit_statement_frame()
+			return
+		if isinstance(stmt, SendStmt):
+			value = yield from self.eval_expr_steps(stmt.expr, env)
+			self.send(value)
+			self._emit_statement_frame()
+			return
+		if isinstance(stmt, ReturnStmt):
+			value = (yield from self.eval_expr_steps(stmt.expr, env)) if stmt.expr else None
+			self._emit_statement_frame()
+			raise ReturnSignal(value)
+		if isinstance(stmt, ExprStmt):
+			yield from self.eval_expr_steps(stmt.expr, env)
+			self._emit_statement_frame()
+			return
+		raise RuntimeErrorWithLine(f"Unknown statement {stmt}", getattr(stmt, "line", -1))
+
+	def eval_expr_steps(self, expr: Any, env: Environment) -> "Generator[StepInfo, None, Any]":
+		if expr is None:
+			return None
+		if isinstance(expr, Literal):
+			return expr.value
+		if isinstance(expr, Var):
+			return env.get(expr.name)
+		if isinstance(expr, UnaryOp):
+			value = yield from self.eval_expr_steps(expr.expr, env)
+			return self.eval_unary(expr.op, value, expr.line)
+		if isinstance(expr, BinaryOp):
+			left = yield from self.eval_expr_steps(expr.left, env)
+			right = yield from self.eval_expr_steps(expr.right, env)
+			return self.eval_binary(expr.op, left, right, expr.line)
+		if isinstance(expr, IndexExpr):
+			base = yield from self.eval_expr_steps(expr.base, env)
+			idx = yield from self.eval_expr_steps(expr.index, env)
+			if not isinstance(idx, int):
+				raise RuntimeErrorWithLine("Index must be int", expr.line)
+			return base[idx]
+		if isinstance(expr, CallExpr):
+			args: List[Any] = []
+			for arg in expr.args:
+				args.append((yield from self.eval_expr_steps(arg, env)))
+			return (yield from self.call_function_steps(expr.name, args, expr.line, env))
+		if isinstance(expr, ColorLit):
+			r = yield from self.eval_expr_steps(expr.r, env)
+			g = yield from self.eval_expr_steps(expr.g, env)
+			b = yield from self.eval_expr_steps(expr.b, env)
+			return (r, g, b)
+		if isinstance(expr, PixelLit):
+			x = yield from self.eval_expr_steps(expr.x, env)
+			y = yield from self.eval_expr_steps(expr.y, env)
+			return (x, y)
+		if isinstance(expr, ListLit):
+			items: List[Any] = []
+			for item in expr.items:
+				items.append((yield from self.eval_expr_steps(item, env)))
+			return items
+		if isinstance(expr, ParenExpr):
+			return (yield from self.eval_expr_steps(expr.expr, env))
+		if isinstance(expr, WalrusAssign):
+			value = yield from self.eval_expr_steps(expr.expr, env)
+			env.set(expr.name, value)
+			return value
+		if isinstance(expr, WalrusDecl):
+			value = yield from self.eval_expr_steps(expr.expr, env)
+			env.define(expr.name, value)
+			return value
+		raise RuntimeErrorWithLine(f"Unknown expression {expr}", getattr(expr, "line", -1))
+
+	def call_function_steps(
+		self,
+		name: str,
+		args: List[Any],
+		line: int,
+		env: Environment,
+	) -> "Generator[StepInfo, None, Any]":
+		fn = env.get(name)
+		if callable(fn) and not isinstance(fn, FunctionValue):
+			return fn(args, line)
+		if isinstance(fn, FunctionValue):
+			decl = fn.decl
+			call_env = Environment(fn.closure)
+			if len(args) != len(decl.params):
+				raise RuntimeErrorWithLine("Argument count mismatch", line)
+			for param, arg in zip(decl.params, args):
+				call_env.define(param.name, arg)
+			try:
+				yield from self.execute_block_steps(decl.body, call_env)
+			except ReturnSignal as rs:
+				return rs.value
+			return None
+		raise RuntimeErrorWithLine(f"Unknown function {name}", line)
+
+	def _default_value(self, type_name: str) -> Any:
+		if type_name == "Frame":
+			return self._track_frame(Frame())
+		return TYPE_DEFAULTS[type_name]()
+
+	def _track_frame(self, frame: Frame) -> Frame:
+		try:
+			frame.set_on_change(self._on_frame_changed)
+		except AttributeError:
+			pass
+		return frame
+
+	def _on_frame_changed(self, frame: Frame) -> None:
+		self._last_modified_frame = frame
+
+	def _reset_statement_frame(self) -> None:
+		self._last_modified_frame = None
+
+	def _emit_statement_frame(self) -> None:
+		if self._statement_end_handler is None:
+			return
+		if self._last_modified_frame is None:
+			return
+		self._statement_end_handler(self._last_modified_frame)
+		self._last_modified_frame = None
 
 	def eval_expr(self, expr: Any, env: Environment) -> Any:
 		if expr is None:
@@ -384,7 +588,7 @@ class Interpreter:
 	def _builtin_frame(self, args: List[Any], line: int) -> Frame:
 		if args:
 			raise RuntimeErrorWithLine("Frame() takes no arguments", line)
-		return Frame()
+		return self._track_frame(Frame())
 
 	def _builtin_set_color(self, args: List[Any], line: int) -> None:
 		if len(args) != 2:
@@ -487,7 +691,7 @@ class Interpreter:
 		path = args[0]
 		if not isinstance(path, str):
 			raise RuntimeErrorWithLine("Path must be string", line)
-		return loadQGC(path)
+		return self._track_frame(loadQGC(path))
 
 	def _builtin_save_qgc(self, args: List[Any], line: int) -> None:
 		if len(args) != 2:

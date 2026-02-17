@@ -716,6 +716,16 @@ class LedMatrixWidget(QMainWindow):
         tab["redo"].clear()
         tab["action_before"] = None
 
+    def display_frame_in_tab(self, index: int, frame: Frame) -> None:
+        tab = self._tab_for_index(index)
+        if not tab:
+            return
+        tab["frame"].display = [list(row) for row in frame.display]
+        tab["scene"].refresh_from_frame()
+        tab["undo"].clear()
+        tab["redo"].clear()
+        tab["action_before"] = None
+
     def _add_tab(self, title: str, frame: Frame | None = None) -> None:
         frame = frame or Frame()
         scene = LedMatrixScene(frame)
@@ -748,6 +758,26 @@ class LedMatrixWidget(QMainWindow):
         self.tabs.append(tab)
         self.tab_widget.addTab(view, title)
         self.tab_widget.setCurrentWidget(view)
+
+    def _tab_for_index(self, index: int) -> dict | None:
+        widget = self.tab_widget.widget(index)
+        if widget is None:
+            return None
+        for tab in self.tabs:
+            if tab.get("view") is widget:
+                return tab
+        return None
+
+    def add_temp_tab(self, title: str) -> int:
+        self._add_tab(title, Frame())
+        return self.tab_widget.currentIndex()
+
+    def set_current_tab(self, index: int) -> None:
+        if 0 <= index < self.tab_widget.count():
+            self.tab_widget.setCurrentIndex(index)
+
+    def close_tab(self, index: int) -> None:
+        self._close_tab(index)
 
     def _close_tab(self, index: int) -> None:
         if self.tab_widget.count() <= 1:

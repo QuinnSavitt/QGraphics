@@ -3,27 +3,39 @@ from pathlib import Path
 
 class Frame:
     # Frame represents a 64x32 pixel display where each pixel is an RGB565 tuple.
-    def __init__(self, start=None):
+    def __init__(self, start=None, on_change=None):
         if start is None:
             self.display = [[(0, 0, 0) for x in range(64)] for y in range(32)]
         else:
             # TODO: validate start
             self.display = start
+        self._on_change = on_change
+
+    def set_on_change(self, on_change) -> None:
+        self._on_change = on_change
+
+    def _notify_change(self) -> None:
+        if self._on_change is not None:
+            self._on_change(self)
 
     def setRed(self, x, y, value):
         r, g, b = self.display[y][x]
         self.display[y][x] = (value, g, b)
+        self._notify_change()
 
     def setGreen(self, x, y, value):
         r, g, b = self.display[y][x]
         self.display[y][x] = (r, value, b)
+        self._notify_change()
 
     def setBlue(self, x, y, value):
         r, g, b = self.display[y][x]
         self.display[y][x] = (r, g, value)
+        self._notify_change()
 
     def setColor(self, x, y, r, g, b):
         self.display[y][x] = (r, g, b)
+        self._notify_change()
 
     def getPixel(self, x, y):
         return self.display[y][x]

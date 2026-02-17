@@ -112,11 +112,18 @@ class QGraphicMainWindow(QMainWindow):
         self.code = CodeEditorWidget()
         self.code.set_publish_handler(self._on_publish)
         self.code.set_send_handler(self._on_send)
+        self.code.set_live_preview_handlers(
+            self._create_preview_tab,
+            self._update_preview_tab,
+            self._close_preview_tab,
+        )
 
         self.top_tabs.addTab(self.canvas, "Canvas")
         self.top_tabs.addTab(self.code, "Code")
 
         self.setCentralWidget(self.top_tabs)
+
+        self._preview_counter = 0
 
         # Top-level tab chrome should match the app aesthetic.
         self.setStyleSheet(
@@ -151,6 +158,18 @@ class QGraphicMainWindow(QMainWindow):
 
     def _on_send(self, path: str) -> None:
         self.canvas.send_qgc_file(path)
+
+    def _create_preview_tab(self, title: str) -> int:
+        self._preview_counter += 1
+        return self.canvas.add_temp_tab(f"{title} {self._preview_counter}")
+
+    def _update_preview_tab(self, index: int, frame: Frame) -> None:
+        self.canvas.display_frame_in_tab(index, frame)
+        self.canvas.set_current_tab(index)
+        self.top_tabs.setCurrentWidget(self.canvas)
+
+    def _close_preview_tab(self, index: int) -> None:
+        self.canvas.close_tab(index)
 
     def _global_rect(self, widget) -> QRect:
         top_left = widget.mapToGlobal(QPoint(0, 0))
